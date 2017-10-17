@@ -34,7 +34,8 @@
 %%%-------------------------------------------------------------------
 %% Recursive Length Prefix
 -module(aevm_rlp).
--export([rlp/1]).
+-export([ decode/1
+	, rlp/1]).
 
 
 %%
@@ -100,10 +101,19 @@ be(X) -> binary:encode_unsigned(X).
 %% 
 %% Thus we finish by formally defining
 %%   Rl: Rl(x) ≡ ( (192 + |s(x)|) · s(x) if |s(x)| < 56
-%%                  247 + BE(|s(x)|) · BE(|s(x)|) · s(x) otherwise
-%%
-%%       s(x) ≡ RLP(x0) · RLP(x1)...
-%%
+%%                  247 + |BE(|s(x)|)| · BE(|s(x)|) · s(x) otherwise
+rl(X) when is_list(X) ->
+    ByteArray = s(X),
+    ArraySize = byte_size(ByteArray),
+    if ArraySize < 56 -> 
+	    FirstByte = 192 + ArraySize,
+	    <<FirstByte, ByteArray/binary>>;
+       true -> 
+	    BE = be(ArraySize),
+	    BESize = byte_size(BE),
+	    FirstByte = 247 + BESize,
+	    <<FirstByte, BE/binary, ByteArray/binary>>
+    end;
 %% If RLP is used to encode a scalar, defined only as a positive
 %% integer (P or any x for Px), it must be specified as the shortest
 %% byte array such that the big-endian interpretation of it is
@@ -117,5 +127,75 @@ be(X) -> binary:encode_unsigned(X).
 %% manner as otherwise invalid RLP data, dismissing it completely.
 %% There is no specific canonical encoding format for signed or
 %% floating-point values.
-rl(X) -> X. %% TODO implement this.
+rl(I) when is_integer(I) -> rlp(be(I)).
+
+%%
+%%       s(x) ≡ RLP(x0) · RLP(x1)...
+%%
+s([X|Xs]) ->
+    X0 = rlp(X),
+    Tail = s(Xs),
+    <<X0/binary, Tail/binary>>;
+s([]) -> <<>>.
+
+
+
+%% TODO: The rlp/decode is unclear on how to handle large integers
+%%       it is not possible to determin if an encoded integer
+%%       is a byte array or an integer.
+%%       As long as encoding is only used to get a serialized form
+%%       for hashing this is fine.
+%%       If one needs to encode and decode there should be a larger
+%%       start byte to indicate list or integer.
+
+decode(<<B>> = X)  when B < 128 -> X;
+decode(<<L, B/binary>>) when L < 184 ->
+    Size = (L - 128)*8,
+    <<X:Size, Rest/binary>> = B,
+    case Rest of
+	<<>> -> <<X:Size>>;
+	_ ->
+	    Tail = decode(Rest),
+	    <<X:Size, Tail/binary >>
+    end;
+decode(<<L, B/binary>>) when L < 193 ->
+    BESize = (L - 183)*8,
+    <<BE:BESize/unsigned-integer, Rest/binary>> = B,
+    BEBytes = BE * 8,
+    <<X:BEBytes, Tail/binary>> = Rest,
+    case Tail of
+	<<>> -> <<X:BEBytes>>;
+	_ ->
+	    Tail2 = decode(Rest),
+	    <<X:BEBytes, Tail2/binary >>
+    end;
+decode(<<L, B/binary>>) when L < 248 ->
+    Size = (L - 192) * 8,
+    <<X:Size,Rest/binary>> = B,
+    XList = binary_to_list(<<X:Size>>),
+    case Rest of
+	<<>> -> XList;
+	_ ->
+	    Tail = decode(Rest),
+	    [XList | Tail]
+    end;
+decode(<<L, B/binary>>) ->
+    BES = (L - 247)*8,
+    <<BE:BES/unsigned-integer, Rest/binary>> = B,
+    BEBytes = BE*8,
+    <<Size:BEBytes/unsigned-integer, Structure/binary>> = Rest,
+    BitSize = Size*8,
+    case Structure of 
+	<<>> -> [Size];
+	_ ->
+	    <<X:BitSize, Tail/binary>> = Structure,
+	    XList = binary_to_list(<<X:BitSize>>),
+	    case Tail of
+		<<>> -> XList;
+		_ -> [XList | decode(Tail)]
+	    end
+    end.
     
+					     
+    
+		      
