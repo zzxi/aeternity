@@ -85,12 +85,13 @@ references:
 jobs:
   build:
     <<: *container_config
+    resource_class: xlarge
     steps:
       - checkout
       - *restore_rebar_cache
       - run:
           name: Build
-          command: ./rebar3 as test do release
+          command: MAKEFLAGS='-j8' ./rebar3 as test do release
       - save_cache:
           key: *build_cache_key
           paths:
