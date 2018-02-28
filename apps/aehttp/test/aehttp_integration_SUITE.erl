@@ -1,5 +1,7 @@
 -module(aehttp_integration_SUITE).
 
+% FIXME: -> nodes
+
 %% common_test exports
 -export(
    [
@@ -307,7 +309,7 @@ correct_ping(_Config) ->
           maps:put(<<"source">>, Peer,
                    PingObj#{<<"genesis_hash">> => EncGHash,
                             <<"best_hash">> => EncTopHash})),
-    rpc(aec_peers, remove, [Peer]),
+    rpc(aec_nodes, remove, [Peer]),
     ok.
 
 broken_pings(_Config) ->
@@ -323,8 +325,8 @@ broken_pings(_Config) ->
                                              <<"genesis_hash">> => <<"foo">>}),
     {ok, 409, #{<<"reason">> := <<"Different genesis blocks">>}} =
         post_ping(WrongGenHashPing),
-    rpc(aec_peers, remove, [Peer]),
-    rpc(aec_peers, remove, [Peer1]),
+    rpc(aec_nodes, remove, [Peer]),
+    rpc(aec_nodes, remove, [Peer1]),
     ok.
 
 blocked_ping(_Config) ->
@@ -336,7 +338,7 @@ blocked_ping(_Config) ->
     % node is blocked now
     {ok, 403, #{<<"reason">> := <<"Not allowed">>}} =
         post_ping(maps:put(<<"source">>, Peer, PingObj)),
-    rpc(aec_peers, remove, [Peer]),
+    rpc(aec_nodes, remove, [Peer]),
     ok.
 
 not_blocked_ping(_Config) ->
@@ -349,7 +351,7 @@ not_blocked_ping(_Config) ->
     % node shouldn't be blocked despite sending garbage...
     {ok, 409, #{<<"reason">> := <<"Different genesis blocks">>}} =
         post_ping(WrongGenHashPing),
-    rpc(aec_peers, remove, [Peer]),
+    rpc(aec_nodes, remove, [Peer]),
     ok.
 
 auto_unblocked_peer(_Config) ->
@@ -359,7 +361,7 @@ auto_unblocked_peer(_Config) ->
     WrongGenHashPing = maps:merge(PingObj, #{<<"source">> => Peer,
                                              <<"genesis_hash">> => <<"foo">>}),
     %% Reset the blocking
-    rpc(aec_peers, unblock_all, []),
+    rpc(aec_nodes, unblock_all, []),
     {ok, 409, #{<<"reason">> := <<"Different genesis blocks">>}} =
         post_ping(WrongGenHashPing),
 
@@ -373,7 +375,7 @@ auto_unblocked_peer(_Config) ->
     {ok, 409, #{<<"reason">> := <<"Different genesis blocks">>}} =
         post_ping(WrongGenHashPing),
 
-    rpc(aec_peers, remove, [Peer]),
+    rpc(aec_nodes, remove, [Peer]),
     rpc(application, unset_env, [aecore, peer_unblock_interval]),
     ok.
 
@@ -2631,13 +2633,13 @@ peers(_Config) ->
 
     %% ensure no peers
     lists:foreach(
-        fun({PeerUri, _}) -> rpc(aec_peers, remove, [PeerUri]) end,
-        rpc(aec_peers, all, [])),
+        fun({PeerUri, _}) -> rpc(aec_nodes, remove, [PeerUri]) end,
+        rpc(aec_nodes, all, [])),
 
     %% ensure no blocked
     lists:foreach(
-        fun(BlockedUri) -> rpc(aec_peers, unblock, [BlockedUri]) end,
-        rpc(aec_peers, blocked, [])),
+        fun(BlockedUri) -> rpc(aec_nodes, unblock, [BlockedUri]) end,
+        rpc(aec_nodes, blocked, [])),
 
     rpc(application, set_env, [aehttp, enable_debug_endpoints, true]),
     {ok, 200, #{<<"blocked">> := [], <<"peers">> := []}} = get_peers(),
@@ -2671,7 +2673,7 @@ peers(_Config) ->
 
     %% cleanup
     lists:foreach(
-        fun(PeerUri) -> rpc(aec_peers, remove, [PeerUri]) end,
+        fun(PeerUri) -> rpc(aec_nodes, remove, [PeerUri]) end,
         Peers),
 
     %% get some blocked peers
@@ -2691,7 +2693,7 @@ peers(_Config) ->
     [] = BlockedPeers -- ReturnedBlocked,
 
     %% clenaup
-    lists:foreach(fun(BlockedPeer) -> rpc(aec_peers, unblock, [BlockedPeer]) end,
+    lists:foreach(fun(BlockedPeer) -> rpc(aec_nodes, unblock, [BlockedPeer]) end,
                   BlockedPeers),
     ok.
 

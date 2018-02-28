@@ -52,13 +52,14 @@
 
 -type response(Type) :: {ok, Type} | {error, string()}.
 
+% FIXME: -> nodes
 -spec ping(http_uri_uri(), map()) -> {ok, map(), list(http_uri_uri())} | {error, any()}.
 ping(Uri, LocalPingObj) ->
     #{<<"share">> := Share,
       <<"genesis_hash">> := GHash,
       <<"best_hash">> := TopHash
      } = LocalPingObj,
-    Peers = aec_peers:get_random(Share, [Uri]),
+    Peers = aec_nodes:get_random(Share, [Uri]),
     lager:debug("ping(~p); Peers = ~p", [Uri, Peers]),
     PingObj = LocalPingObj#{<<"peers">> => Peers,
                             <<"genesis_hash">> => aec_base58c:encode(block_hash, GHash),

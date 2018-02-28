@@ -485,7 +485,8 @@ handle_request('GetAccountBalance', Req, _Context) ->
             {400, [], #{reason => <<"Invalid account hash">>}}
     end;
 
-handle_request('GetPeers', _Req, _Context) ->
+% FIXME: -> nodes
+handle_request('GetPeers', _Req, _Context) -> % FIXME: -> nodes
     case application:get_env(aehttp, enable_debug_endpoints, false) of
         true ->
             Peers =
@@ -494,8 +495,8 @@ handle_request('GetPeers', _Req, _Context) ->
                         #{uri => URI,
                           last_seen => LastSeen}
                     end,
-                    aec_peers:all()),
-            Blocked = aec_peers:blocked(),
+                    aec_nodes:all()),
+            Blocked = aec_nodes:blocked(),
             {200, [], #{peers => Peers,
                         blocked => Blocked}};
         false ->

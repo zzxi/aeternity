@@ -68,7 +68,7 @@
          {'$setup_hooks',
           [
            {normal, [
-                     {110, {aec_peers, check_env, []}},
+                     {110, {aec_nodes, check_env, []}},
                      {110, {aecore_app, check_env, []}},
                      {200, {aec_db, check_db, []}}
                     ]}

@@ -501,7 +501,7 @@ handle_ping(#{<<"source">> := Src} = PingObj) ->
     %% Source only contains host and port
     %% If the http API version differs, then response ping will go
     %% to wrong endpoint and eventually timeout.
-    IsBlocked = aec_peers:is_blocked(Src),
+    IsBlocked = aec_nodes:is_blocked(Src),
     case IsBlocked of
         false -> handle_ping_(Src, PingObj);
         true  ->
@@ -509,6 +509,7 @@ handle_ping(#{<<"source">> := Src} = PingObj) ->
             abort_sync(Src, 403, <<"Not allowed">>)
     end.
 
+% FIXME: -> nodes
 handle_ping_(Source, PingObj) ->
     LocalPingObj = aec_sync:local_ping_object(),
     case PingObj of
@@ -524,9 +525,9 @@ handle_ping_(Source, PingObj) ->
                     case aec_sync:compare_ping_objects(
                            Source, LocalPingObj, RemoteObj) of
                         ok ->
-                            aec_peers:update_last_seen(Source),
-                            TheirPeers = maps:get(<<"peers">>, RemoteObj, []),
-                            aec_peers:add_and_ping_peers(TheirPeers),
+                            aec_nodes:update_last_seen(Source),
+                            TheirPeers = maps:get(<<"peers">>, RemoteObj, []), % FIXME: -> nodes
+                            aec_nodes:add_and_ping_peers(TheirPeers),
                             LocalGHash =  maps:get(<<"genesis_hash">>, LocalPingObj),
                             LocalTopHash =  maps:get(<<"best_hash">>, LocalPingObj),
                             Map = LocalPingObj#{<<"pong">> => <<"pong">>,
@@ -536,7 +537,7 @@ handle_ping_(Source, PingObj) ->
                             Res =
                                 case mk_num(Share) of
                                     N when is_integer(N), N > 0 ->
-                                        Peers = aec_peers:get_random(N, [Source|TheirPeers]),
+                                        Peers = aec_nodes:get_random(N, [Source|TheirPeers]),
                                         lager:debug("PeerUris = ~p~n", [Peers]),
                                         Map#{<<"peers">> => Peers};
                                     _ ->
@@ -555,7 +556,7 @@ handle_ping_(Source, PingObj) ->
     end.
 
 abort_ping(Source) ->
-    aec_peers:block_peer(Source),
+    aec_nodes:block_peer(Source),
     abort_sync(Source, 409, <<"Different genesis blocks">>).
 
 abort_sync(Uri, Code, Reason) ->

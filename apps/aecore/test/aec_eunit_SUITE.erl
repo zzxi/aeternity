@@ -1,5 +1,7 @@
 -module(aec_eunit_SUITE).
 
+% FIXME: -> nodes
+
 -export([all/0, groups/0, suite/0,
          init_per_suite/1, end_per_suite/1,
          init_per_group/2, end_per_group/2,
@@ -123,14 +125,14 @@ aec_sync_test(Config) ->
     ct:log("trying to connect --> job scheduled"),
     %% give it some time to execute the scheduled job
     timer:sleep(50),   
-    false = aec_peers:is_blocked("http://my.evil_machine:3012/"),
+    false = aec_nodes:is_blocked("http://my.evil_machine:3012/"),
     ct:log("as expected not blocked"),
 
     ok = aec_sync:connect_peer("http://my.evil_machine:3012/"),
     ct:log("trying to connect again --> job scheduled"),
     timer:sleep(50),
     SyncPid = whereis(aec_sync), %% Sync has not been restarted!
-    Peers = aec_peers:all(),
+    Peers = aec_nodes:all(),
     ct:log("tried twice and although it failed, it is a peer: ~p", [Peers]),
     1 = length(Peers),
 

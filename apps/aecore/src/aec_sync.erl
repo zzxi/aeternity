@@ -6,6 +6,8 @@
 %%%=============================================================================
 -module(aec_sync).
 
+% FIXME: -> nodes
+
 -behaviour(gen_server).
 
 -import(aeu_debug, [pp/1]).
@@ -15,7 +17,7 @@
          start_link/0
         ]).
 
-%% API called from strongly connected component aec_peers
+%% API called from strongly connected component aec_nodes
 -export([schedule_ping/1]).
 
 %% API called from both aehttp_dispatch_ext and aeu_requests
@@ -64,7 +66,7 @@ connect_peer(Uri) ->
 local_ping_object() ->
     GHash = aec_chain:genesis_hash(),
     TopHash = aec_chain:top_header_hash(),
-    Source = aec_peers:get_local_peer_uri(),
+    Source = aec_nodes:get_local_peer_uri(),
     {ok, Difficulty} = aec_chain:difficulty_at_top_block(),
     #{<<"genesis_hash">> => GHash,
       <<"best_hash">>    => TopHash,
@@ -82,7 +84,7 @@ local_ping_object() ->
 -spec compare_ping_objects(http_uri_uri(), ping_obj(), ping_obj()) -> ok | {error, any()}.
 compare_ping_objects(RemoteUri, Local, Remote) ->
     lager:debug("Compare (~p): Local: ~p; Remote: ~p", [RemoteUri, Local, Remote]),
-    ok = aec_peers:add(RemoteUri, false),  %% in case aec_peers has restarted inbetween
+    ok = aec_nodes:add(RemoteUri, false),  %% in case aec_nodes has restarted inbetween
     case {maps:get(<<"genesis_hash">>, Local),
           maps:get(<<"genesis_hash">>, Remote)} of
         {G, G} ->
@@ -141,15 +143,15 @@ init([]) ->
     aec_events:subscribe(tx_created),
     Peers = application:get_env(aecore, peers, []),
     BlockedPeers = application:get_env(aecore, blocked_peers, []),
-    [aec_peers:block_peer(P) || P <- BlockedPeers],
-    aec_peers:add_and_ping_peers(Peers, true),
+    [aec_nodes:block_peer(P) || P <- BlockedPeers],
+    aec_nodes:add_and_ping_peers(Peers, true),
     {ok, #state{}}.
 
 handle_call(_, _From, State) ->
     {reply, error, State}.
 
 handle_cast({connect, Uri}, State) ->
-    aec_peers:add(Uri, _Connect = true),
+    aec_nodes:add(Uri, _Connect = true),
     {noreply, State};
 handle_cast({start_sync, Uri}, State) ->
     jobs:enqueue(sync_jobs, {start_sync, Uri}),
@@ -217,14 +219,14 @@ process_job([{_T, Job}]) ->
     end.
 
 enqueue(Op, Msg) ->
-    [ jobs:enqueue(sync_jobs, {Op, Msg, Uri}) || Uri <- aec_peers:get_random(all) ].
+    [ jobs:enqueue(sync_jobs, {Op, Msg, Uri}) || Uri <- aec_nodes:get_random(all) ].
 
 await_aehttp_and_ping_peer(Uri) ->
     %% Don't ping until our own HTTP endpoint is up. This is not strictly
     %% needed for the ping itself, but given that a ping can quickly
     %% lead to a greater discovery, we should be prepared to handle pings
     %% ourselves at this point.
-    %% The URI comes from aec_peers and is a valid http url.
+    %% The URI comes from aec_nodes and is a valid http url.
     case await_aehttp() of
         ok ->
             ping_peer(Uri);
@@ -242,20 +244,20 @@ ping_peer(Uri) ->
             case compare_ping_objects(Uri, LocalPingObj, RemotePingObj) of
                 ok ->
                     %% log_ping adds peer as side-effect
-                    %% (in case aec_peers has restarted inbetween)
+                    %% (in case aec_nodes has restarted inbetween)
                     %% If it has been user removed before it was scheduled
                     %% it is also added again.
-                    aec_peers:log_ping(Uri, good),
-                    aec_peers:add_and_ping_peers(RemotePeers);
+                    aec_nodes:log_ping(Uri, good),
+                    aec_nodes:add_and_ping_peers(RemotePeers);
                 {error, different_genesis_blocks} ->
-                    aec_peers:block_peer(Uri)
+                    aec_nodes:block_peer(Uri)
             end;
         {error, protocol_violation} ->
-            aec_peers:block_peer(Uri);
+            aec_nodes:block_peer(Uri);
         {error, _} ->
             %% If we ping a peer with wrong API version, time out in aue_request
             %% and Peer is errored until it upgrades/downgrades to the same version.
-            aec_peers:log_ping(Uri, error)
+            aec_nodes:log_ping(Uri, error)
   end.
 
 %% The gproc name below is registered in the start function of

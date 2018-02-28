@@ -1,5 +1,7 @@
 -module(aecore_sync_SUITE).
 
+% FIXME: -> nodes
+
 %% common_test exports
 -export(
    [
@@ -169,7 +171,7 @@ start_second_node(Config) ->
     aecore_suite_utils:start_node(Dev2, Config),
     aecore_suite_utils:connect(N2),
     aecore_suite_utils:await_aehttp(N2),
-    ct:log("Peers on dev2: ~p", [rpc:call(N2, aec_peers, all, [], 5000)]),
+    ct:log("Peers on dev2: ~p", [rpc:call(N2, aec_nodes, all, [], 5000)]),
     B1 = rpc:call(N1, aec_chain, top_block, [], 5000),
     ok = aecore_suite_utils:check_for_logs([dev2], Config),
     true = expect_block(N2, B1).
@@ -181,7 +183,7 @@ start_third_node(Config) ->
     aecore_suite_utils:start_node(Dev3, Config),
     aecore_suite_utils:connect(N3),
     aecore_suite_utils:await_aehttp(N3),
-    ct:log("Peers on dev3: ~p", [rpc:call(N3, aec_peers, all, [], 5000)]),
+    ct:log("Peers on dev3: ~p", [rpc:call(N3, aec_nodes, all, [], 5000)]),
     ok = aecore_suite_utils:check_for_logs([dev3], Config),
     true = expect_same(T0, Config).
 
@@ -220,9 +222,9 @@ start_blocked_second(Config) ->
     aecore_suite_utils:start_node(Dev2, Config),
     aecore_suite_utils:connect(N2),
     timer:sleep(2000),
-    ct:log("Peers on dev1: ~p", [rpc:call(N1, aec_peers, all, [], 5000)]),
+    ct:log("Peers on dev1: ~p", [rpc:call(N1, aec_nodes, all, [], 5000)]),
     ct:log("Unblocked peers on dev1: ~p",
-           [rpc:call(N1, aec_peers, get_random, [10], 5000)]),
+           [rpc:call(N1, aec_nodes, get_random, [10], 5000)]),
     await_sync_abort(T0, [N1, N2]).
 
 tx_first_pays_second(Config) ->

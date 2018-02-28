@@ -17,13 +17,13 @@
 %%% used internally.
 %%% @end
 %%%=============================================================================
--module(aec_peers).
+-module(aec_nodes).
 
 -behaviour(gen_server).
 
 %% API
--export([add_and_ping_peers/1,
-         add_and_ping_peers/2,
+-export([add_and_ping_peers/1, % FIXME: -> nodes
+         add_and_ping_peers/2, % FIXME: -> nodes
          block_peer/1,
          unblock_peer/1,
          is_blocked/1,
