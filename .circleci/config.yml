@@ -5,12 +5,12 @@ references:
     setup_remote_docker:
       docker_layer_caching: true
     docker:
-      - image: aetrnty/builder
+      - image: aeternity/builder
         user: builder
     working_directory: ~/epoch
     environment:
       DOCKER_CLIENT_VERSION: "17.09.0-ce"
-      DOCKERHUB_REPO: aetrnty/epoch
+      DOCKERHUB_REPO: aeternity/epoch
 
   setup_remote_docker: &setup_remote_docker
     setup_remote_docker:
@@ -188,6 +188,17 @@ jobs:
             epmd -daemon
             make eunit
 
+  aevm_tests:
+    <<: *container_config
+    steps:
+      - checkout
+      - *restore_rebar_cache
+      - *restore_build_cache
+      - run:
+          name: AEVM Tests
+          command: |
+            make aevm-test
+
   static_analysis:
     <<: *container_config
     steps:
@@ -211,6 +222,7 @@ jobs:
       - run: make dialyzer
       - run: make swagger-check
       - run: make rebar-lock-check
+      - run: ./rebar3 xref || true
 
   linux_package:
     <<: *container_config
@@ -343,7 +355,7 @@ jobs:
           name: Snapshot of UAT blockchain
           command: |
             cd deployment/ansible
-            ansible-playbook --limit="epoch:&uat" \
+            ansible-playbook --limit="tag_role_epoch:&tag_env_uat" \
               --extra-vars "download_dir=/tmp/chain_snapshots backup_suffix=db_backup_$(date +%s)" \
               mnesia_backup.yml
       - store_artifacts:
@@ -567,6 +579,17 @@ workflows:
               ignore: /.*/
             tags:
               only: /^v.*$/
+
+  nightly:
+    triggers:
+      - schedule:
+          cron: "0 0 * * *"
+          filters:
+            branches:
+              only:
+                - master
+    jobs:
+      - aevm_tests
 
   chain_snapshots:
     triggers:

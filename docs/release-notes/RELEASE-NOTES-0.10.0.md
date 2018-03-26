@@ -4,10 +4,13 @@
 It:
 * Improves chain handling by storing accumulated difficulty in the db rather than recomputing it. This impacts the persisted DB.
 * Enable user configuration of HTTP API acceptors pool
+* Restructure the transaction root hash in the block header for stricter validation. This impacts consensus and the persisted DB.
+* Improves the stability of the node.
 * Does this. This impacts consensus;
 * Does that. This impacts the persisted DB;
 * Does that;
 * Improves the stability of the testnet.
+* Changes the DockerHub organization to `aeternity`
 
 [this-release]: https://github.com/aeternity/epoch/releases/tag/v0.10.0
 
@@ -27,7 +30,7 @@ The instructions below describe:
 
 You can run a node by using either:
 * The published [release binary][this-release] corresponding to your platform; or
-* The published [Docker image `aetrnty/epoch`][docker].
+* The published [Docker image `aeternity/epoch`][docker].
 
 [docker]: https://github.com/aeternity/epoch/blob/v0.10.0/docs/docker.md
 

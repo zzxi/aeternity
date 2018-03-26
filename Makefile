@@ -161,7 +161,7 @@ python-uats:
 python-single-uat:
 	( cd $(PYTHON_DIR) && TEST_NAME=$(TEST_NAME) $(MAKE) single-uat; )
 
-python-release-test:
+python-release-test: swagger
 	( cd $(PYTHON_DIR) && WORKDIR="$(WORKDIR)" TARBALL=$(TARBALL) VER=$(VER) $(MAKE) release-test; )
 
 SWAGGER_CODEGEN_CLI_V = 2.3.1
@@ -173,7 +173,6 @@ swagger: config/swagger.yaml $(SWAGGER_CODEGEN_CLI)
 	@echo "Swagger tempdir: $(SWTEMP)"
 	@( mkdir -p $(HTTP_APP)/priv && cp $(SWTEMP)/priv/swagger.json $(HTTP_APP)/priv/; )
 	@( cd $(HTTP_APP) && $(MAKE) updateswagger; )
-	@( mkdir -p $(HTTP_APP)/src/swagger && cp $(SWTEMP)/src/*.erl $(HTTP_APP)/src/swagger; )
 	@rm -fr $(SWTEMP)
 	@./rebar3 swagger_endpoints
 	@$(SWAGGER_CODEGEN) generate -i $< -l python -o $(SWTEMP)
@@ -189,7 +188,6 @@ swagger-check:
 		"$(CURDIR)/config/swagger.yaml" \
 		"swagger" \
 		"$(CURDIR)/apps/aehttp/priv/swagger.json" \
-		"$(CURDIR)/apps/aehttp/src/swagger" \
 		"$(CURDIR)/py/tests/swagger_client"
 
 $(SWAGGER_CODEGEN_CLI):
@@ -260,11 +258,12 @@ internal-clean: $$(KIND)
 .PHONY: \
 	all console \
 	local-build local-start local-stop local-attach \
-	prod-build prod-start prod-stop prod-attach prod-package \
-	multi-build, multi-start, multi-stop, multi-clean \
-	dev1-start, dev1-stop, dev1-attach, dev1-clean \
-	dev2-start, dev2-stop, dev2-attach, dev2-clean \
-	dev3-start, dev3-stop, dev3-attach, dev3-clean \
+	prod-build prod-start prod-stop prod-attach prod-package prod-compile-deps \
+	multi-build multi-start multi-stop multi-clean \
+	dev1-start dev1-stop dev1-attach dev1-clean \
+	dev2-start dev2-stop dev2-attach dev2-clean \
+	dev3-start dev3-stop dev3-attach dev3-clean \
+	internal-start internal-stop internal-attach internal-clean internal-compile-deps \
 	dialyzer \
 	test aevm-test-deps\
 	kill killall \
