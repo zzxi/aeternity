@@ -7,7 +7,7 @@ services:
     ports: ["3013:3013", "3113:3113"]
     environment:
       EPOCH_CONFIG: /home/epoch/epoch.yaml
-    command: -aecore expected_mine_rate ${EPOCH_MINE_RATE:-15000}
+    command: -aecore expected_mine_rate ${EPOCH_MINE_RATE:-15000} -aehttp enable_debug_endpoints true
     volumes:
       - ${PWD}/docker/epoch_node1_mean16.yaml:/home/epoch/epoch.yaml
       - node1_db:/home/epoch/node/data/mnesia
