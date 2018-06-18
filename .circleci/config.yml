@@ -482,6 +482,12 @@ jobs:
       - DEPLOY_ENV: dev2
     steps: *deploy_steps
 
+  deploy_dev3:
+    <<: *container_config
+    environment:
+      - DEPLOY_ENV: dev3
+    steps: *deploy_steps
+
   deploy_uat_blue:
     <<: *container_config
     environment:
@@ -651,6 +657,13 @@ workflows:
           filters:
             branches:
               only: env/dev2
+
+      - deploy_dev3:
+          requires:
+            - linux_package
+          filters:
+            branches:
+              only: PT-157219023-terraform
 
       - hodl_blue:
           type: approval
