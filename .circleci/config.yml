@@ -141,7 +141,6 @@ references:
       path: *packages_workspace
       destination: /
 
-
   deploy_steps: &deploy_steps
     - checkout
     - *restore_pip_cache
