@@ -181,8 +181,8 @@ paths:
           name: tx_encoding
           description: 'Transaction encoding'
           type: string
-          enum: [message_pack, json]
-          default: message_pack
+          enum: [binary, json]
+          default: binary
       responses:
         '200':
           description: The transaction found
@@ -1480,7 +1480,7 @@ paths:
           name: tx_encoding
           description: 'Transactions encoding'
           type: string
-          enum: [message_pack, json]
+          enum: [binary, json]
           default: json
       responses:
         '200':
@@ -1511,7 +1511,7 @@ paths:
           name: tx_encoding
           description: 'Transactions encoding'
           type: string
-          enum: [message_pack, json]
+          enum: [binary, json]
           default: json
       responses:
         '200':
@@ -1541,7 +1541,7 @@ paths:
           name: tx_encoding
           description: 'Transactions encoding'
           type: string
-          enum: [message_pack, json]
+          enum: [binary, json]
           default: json
       responses:
         '200':
@@ -1563,7 +1563,7 @@ paths:
           name: tx_encoding
           description: 'Transactions encoding'
           type: string
-          enum: [message_pack, json]
+          enum: [binary, json]
           default: json
       responses:
         '200':
@@ -1585,7 +1585,7 @@ paths:
           name: tx_encoding
           description: 'Transactions encoding'
           type: string
-          enum: [message_pack, json]
+          enum: [binary, json]
           default: json
       responses:
         '200':
@@ -1797,8 +1797,8 @@ paths:
           name: tx_encoding
           description: 'Transactions encoding'
           type: string
-          enum: [message_pack, json]
-          default: message_pack
+          enum: [binary, json]
+          default: binary
       responses:
         '200':
           description: The transaction found
@@ -1835,8 +1835,8 @@ paths:
           name: tx_encoding
           description: 'Transactions encoding'
           type: string
-          enum: [message_pack, json]
-          default: message_pack
+          enum: [binary, json]
+          default: binary
         - in: query
           name: tx_types
           description: 'Transactions types to show. Comma separated'
@@ -1885,8 +1885,8 @@ paths:
           name: tx_encoding
           description: 'Transactions encoding'
           type: string
-          enum: [message_pack, json]
-          default: message_pack
+          enum: [binary, json]
+          default: binary
       responses:
         '200':
           description: The transaction found
@@ -1916,8 +1916,8 @@ paths:
           name: tx_encoding
           description: 'Transactions encoding'
           type: string
-          enum: [message_pack, json]
-          default: message_pack
+          enum: [binary, json]
+          default: binary
       responses:
         '200':
           description: The transaction found
@@ -1954,8 +1954,8 @@ paths:
           name: tx_encoding
           description: 'Transactions encoding'
           type: string
-          enum: [message_pack, json]
-          default: message_pack
+          enum: [binary, json]
+          default: binary
         - in: query
           name: tx_types
           description: 'Transactions types to show. Comma separated'

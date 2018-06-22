@@ -204,8 +204,8 @@
           "description" : "Transaction encoding",
           "required" : false,
           "type" : "string",
-          "default" : "message_pack",
-          "enum" : [ "message_pack", "json" ]
+          "default" : "binary",
+          "enum" : [ "binary", "json" ]
         } ],
         "responses" : {
           "200" : {
@@ -1763,7 +1763,7 @@
           "required" : false,
           "type" : "string",
           "default" : "json",
-          "enum" : [ "message_pack", "json" ]
+          "enum" : [ "binary", "json" ]
         } ],
         "responses" : {
           "200" : {
@@ -1800,7 +1800,7 @@
           "required" : false,
           "type" : "string",
           "default" : "json",
-          "enum" : [ "message_pack", "json" ]
+          "enum" : [ "binary", "json" ]
         } ],
         "responses" : {
           "200" : {
@@ -1837,7 +1837,7 @@
           "required" : false,
           "type" : "string",
           "default" : "json",
-          "enum" : [ "message_pack", "json" ]
+          "enum" : [ "binary", "json" ]
         } ],
         "responses" : {
           "200" : {
@@ -1862,7 +1862,7 @@
           "required" : false,
           "type" : "string",
           "default" : "json",
-          "enum" : [ "message_pack", "json" ]
+          "enum" : [ "binary", "json" ]
         } ],
         "responses" : {
           "200" : {
@@ -1887,7 +1887,7 @@
           "required" : false,
           "type" : "string",
           "default" : "json",
-          "enum" : [ "message_pack", "json" ]
+          "enum" : [ "binary", "json" ]
         } ],
         "responses" : {
           "200" : {
@@ -2110,8 +2110,8 @@
           "description" : "Transactions encoding",
           "required" : false,
           "type" : "string",
-          "default" : "message_pack",
-          "enum" : [ "message_pack", "json" ]
+          "default" : "binary",
+          "enum" : [ "binary", "json" ]
         } ],
         "responses" : {
           "200" : {
@@ -2155,8 +2155,8 @@
           "description" : "Transactions encoding",
           "required" : false,
           "type" : "string",
-          "default" : "message_pack",
-          "enum" : [ "message_pack", "json" ]
+          "default" : "binary",
+          "enum" : [ "binary", "json" ]
         }, {
           "name" : "tx_types",
           "in" : "query",
@@ -2216,8 +2216,8 @@
           "description" : "Transactions encoding",
           "required" : false,
           "type" : "string",
-          "default" : "message_pack",
-          "enum" : [ "message_pack", "json" ]
+          "default" : "binary",
+          "enum" : [ "binary", "json" ]
         } ],
         "responses" : {
           "200" : {
@@ -2253,8 +2253,8 @@
           "description" : "Transactions encoding",
           "required" : false,
           "type" : "string",
-          "default" : "message_pack",
-          "enum" : [ "message_pack", "json" ]
+          "default" : "binary",
+          "enum" : [ "binary", "json" ]
         } ],
         "responses" : {
           "200" : {
@@ -2298,8 +2298,8 @@
           "description" : "Transactions encoding",
           "required" : false,
           "type" : "string",
-          "default" : "message_pack",
-          "enum" : [ "message_pack", "json" ]
+          "default" : "binary",
+          "enum" : [ "binary", "json" ]
         }, {
           "name" : "tx_types",
           "in" : "query",

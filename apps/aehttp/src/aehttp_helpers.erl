@@ -38,6 +38,8 @@
 
 -import(aeu_debug, [pp/1]).
 
+-include_lib("aehttp_encodings.hrl").
+
 process_request(FunsList, Req) ->
     process_request(FunsList, Req, #{}).
 
@@ -388,7 +390,7 @@ get_transaction(TxKey, TxStateKey) ->
 parse_tx_encoding(TxEncodingKey) ->
     fun(_Req, State) ->
         TxEncoding = maps:get(TxEncodingKey, State),
-        case lists:member(TxEncoding, [message_pack, json]) of
+        case lists:member(TxEncoding, [?BINARY_ENCODING, ?JSON_ENCODING]) of
             true ->
                 {ok, maps:put(TxEncodingKey, TxEncoding, State)};
             false ->
@@ -403,9 +405,9 @@ encode_transaction(TxKey, TxEncodingKey, EncodedTxKey) ->
         TxEncoding = maps:get(TxEncodingKey, State),
         DataSchema =
             case TxEncoding of
-                json ->
+                ?JSON_ENCODING ->
                     <<"SingleTxJSON">>;
-                message_pack ->
+                ?BINARY_ENCODING ->
                     <<"SingleTxMsgPack">>
             end,
         T =
@@ -419,17 +421,17 @@ encode_transaction(TxKey, TxEncodingKey, EncodedTxKey) ->
         {ok, maps:put(EncodedTxKey, #{tx => T, schema => DataSchema}, State)}
     end.
 
--spec read_tx_encoding_param(map()) -> {ok, json | message_pack} |
+-spec read_tx_encoding_param(map()) -> {ok, ?JSON_ENCODING | ?BINARY_ENCODING} |
                                        {error, {integer(), list(), map()}}.
 read_tx_encoding_param(Req) ->
-    read_tx_encoding_param(Req, message_pack).
+    read_tx_encoding_param(Req, binary).
 
--spec read_tx_encoding_param(map(), DefaultEncoding :: json | message_pack) ->
-                                    {ok, json | message_pack} |
+-spec read_tx_encoding_param(map(), DefaultEncoding :: ?JSON_ENCODING | ?BINARY_ENCODING) ->
+                                    {ok, ?JSON_ENCODING | ?BINARY_ENCODING} |
                                     {error, {integer(), list(), map()}}.
 read_tx_encoding_param(Req, DefaultEncoding) ->
     case read_optional_enum_param(tx_encoding, Req, DefaultEncoding,
-                                  [message_pack, json]) of
+                                  [?BINARY_ENCODING, ?JSON_ENCODING]) of
         {error, unexpected_value} ->
             {error, {404, [], #{reason => <<"Unsupported transaction encoding">>}}};
         {ok, Encoding} ->
@@ -493,7 +495,7 @@ get_block_from_chain(Fun) when is_function(Fun, 0) ->
     end.
 
 get_block(Fun, Req) ->
-    get_block(Fun, Req, message_pack, true).
+    get_block(Fun, Req, ?BINARY_ENCODING, true).
 
 get_block(Fun, Req, DefaultEncoding) ->
     get_block(Fun, Req, DefaultEncoding, true).
@@ -507,9 +509,9 @@ get_block(Fun, Req, DefaultEncoding, AddHash) when is_function(Fun, 0) ->
                 {ok, TxEncoding} ->
                     DataSchema =
                         case TxEncoding of
-                            message_pack ->
+                            ?BINARY_ENCODING ->
                                 <<"BlockWithMsgPackTxs">>;
-                            json ->
+                            ?JSON_ENCODING ->
                                 <<"BlockWithJSONTxs">>
                         end,
                     Resp0 = aehttp_logic:cleanup_genesis(

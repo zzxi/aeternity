@@ -35,6 +35,7 @@
                         ]).
 
 -compile({parse_transform, lager_transform}).
+-include_lib("aehttp_encodings.hrl").
 
 -spec handle_request(
         OperationID :: atom(),
@@ -627,7 +628,7 @@ handle_request('DecodeData', Req, _Context) ->
 
 handle_request('GetTx', Req, _Context) ->
     ParseFuns = [read_required_params([tx_hash]),
-                 read_optional_params([{tx_encoding, tx_encoding, message_pack}]),
+                 read_optional_params([{tx_encoding, tx_encoding, ?BINARY_ENCODING}]),
                  parse_tx_encoding(tx_encoding),
                  base58_decode([{tx_hash, tx_hash, tx_hash}]),
                  get_transaction(tx_hash, tx),

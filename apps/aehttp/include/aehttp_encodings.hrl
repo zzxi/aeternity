@@ -1,0 +1,2 @@
+-define(JSON_ENCODING, json).
+-define(BINARY_ENCODING, binary).

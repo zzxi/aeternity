@@ -10,6 +10,8 @@
                         , get_block_from_chain/1
                         ]).
 
+-include_lib("aehttp_encodings.hrl").
+
 -spec handle_request(
         OperationID :: atom(),
         Req :: map(),
@@ -407,9 +409,9 @@ get_block_tx_by_index(Fun, Index, Req) when is_function(Fun, 0) ->
                         {ok, TxEncoding} ->
                             DataSchema =
                                 case TxEncoding of
-                                    json ->
+                                    ?JSON_ENCODING ->
                                         <<"SingleTxJSON">>;
-                                    message_pack ->
+                                    ?BINARY_ENCODING ->
                                         <<"SingleTxMsgPack">>
                                 end,
                             H = aec_blocks:to_header(Block),
@@ -429,9 +431,9 @@ get_block_range(GetFun, Req) when is_function(GetFun, 0) ->
         {ok, TxEncoding} ->
             DataSchema =
                 case TxEncoding of
-                    json ->
+                    ?JSON_ENCODING ->
                         <<"JSONTxs">>;
-                    message_pack ->
+                    ?BINARY_ENCODING ->
                         <<"MsgPackTxs">>
                 end,
             case GetFun() of

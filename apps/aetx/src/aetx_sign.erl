@@ -37,6 +37,7 @@
               binary_signed_tx/0]).
 
 -include_lib("apps/aecore/include/blocks.hrl").
+-include_lib("apps/aehttp/include/aehttp_encodings.hrl").
 
 -record(signed_tx, {
           tx                         :: aetx:tx(),
@@ -160,19 +161,19 @@ serialization_template(?SIG_TX_VSN) ->
     , {transaction, binary}
     ].
 
--spec serialize_for_client(json|message_pack, #header{}, aetx_sign:signed_tx()) ->
+-spec serialize_for_client(?JSON_ENCODING|?BINARY_ENCODING, #header{}, aetx_sign:signed_tx()) ->
                               binary() | map().
 serialize_for_client(Encoding, Header, #signed_tx{}=S) ->
     {ok, BlockHash} = aec_headers:hash_header(Header),
     serialize_for_client(Encoding, S, aec_headers:height(Header), BlockHash,
                          hash(S)).
 
--spec serialize_for_client_pending(json|message_pack, aetx_sign:signed_tx()) ->
+-spec serialize_for_client_pending(?JSON_ENCODING|?BINARY_ENCODING, aetx_sign:signed_tx()) ->
                               binary() | map().
 serialize_for_client_pending(Encoding, #signed_tx{}=S) ->
     serialize_for_client(Encoding, S, -1, <<>>, hash(S)).
 
-serialize_for_client(message_pack, #signed_tx{}=S, BlockHeight, BlockHash0,
+serialize_for_client(?BINARY_ENCODING, #signed_tx{}=S, BlockHeight, BlockHash0,
                      TxHash) ->
     BlockHash = case BlockHash0 of
                     <<>> -> <<"none">>;
@@ -188,7 +189,7 @@ serialize_for_client(message_pack, #signed_tx{}=S, BlockHeight, BlockHash0,
                MetaData
               ],
     aec_base58c:encode(transaction, msgpack:pack(Payload));
-serialize_for_client(json, #signed_tx{tx = Tx, signatures = Sigs},
+serialize_for_client(?JSON_ENCODING, #signed_tx{tx = Tx, signatures = Sigs},
                      BlockHeight, BlockHash0, TxHash) ->
     BlockHash = case BlockHash0 of
                     <<>> -> <<"none">>;
@@ -200,8 +201,9 @@ serialize_for_client(json, #signed_tx{tx = Tx, signatures = Sigs},
       <<"hash">> => aec_base58c:encode(tx_hash, TxHash),
       <<"signatures">> => lists:map(fun(Sig) -> aec_base58c:encode(signature, Sig) end, Sigs)}.
 
-meta_data_from_client_serialized(message_pack, Bin) ->
-    {transaction, MsgPackBin} = aec_base58c:decode(Bin),
+meta_data_from_client_serialized(?BINARY_ENCODING, Bin) ->
+    {transaction, Bin} = aec_base58c:decode(Bin),
+    {ok, SignedTx
     {ok, [_Type, _Version, _TxSer, GenericData]} = msgpack:unpack(MsgPackBin),
     [#{<<"block_height">> := BlockHeight},
      #{<<"block_hash">> := BlockHashEncoded},
@@ -211,7 +213,7 @@ meta_data_from_client_serialized(message_pack, Bin) ->
     #{block_height => BlockHeight,
       block_hash => BlockHash,
       hash => TxHash};
-meta_data_from_client_serialized(json, Serialized) ->
+meta_data_from_client_serialized(?JSON_ENCODING, Serialized) ->
     #{<<"tx">> := _EncodedTx,
       <<"block_height">> := BlockHeight,
       <<"block_hash">> := BlockHashEncoded,

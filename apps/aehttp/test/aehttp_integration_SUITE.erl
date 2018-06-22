@@ -7,6 +7,7 @@
 %%
 
 -include_lib("stdlib/include/assert.hrl").
+-include_lib("aehttp_encodings.hrl").
 %% common_test exports
 -export(
    [
@@ -667,7 +668,7 @@ block_not_found_by_height(_Config) ->
                     {ok, 404, #{<<"reason">> := <<"Chain too short">>}}
                         = get_block_by_height(H, Opt)
                 end,
-                [default, message_pack, json])
+                [default, ?BINARY_ENCODING, ?JSON_ENCODING])
         end,
         lists:seq(1, ?DEFAULT_TESTS_COUNT)),
 
@@ -687,7 +688,7 @@ block_not_found_by_hash(_Config) ->
                     {ok, 404, #{<<"reason">> := <<"Block not found">>}}
                         = get_block_by_hash(Hash, Opt)
                 end,
-                [default, message_pack, json])
+                [default, ?BINARY_ENCODING, ?JSON_ENCODING])
         end,
         lists:seq(1, ?DEFAULT_TESTS_COUNT)),
     ok.
@@ -701,7 +702,7 @@ block_not_found_by_broken_hash(_Config) ->
                     {ok, 400, #{<<"reason">> := <<"Invalid hash">>}} =
                         get_block_by_hash(BrokenHash, Opt)
                 end,
-                [default, message_pack, json])
+                [default, ?BINARY_ENCODING, ?JSON_ENCODING])
         end,
         lists:seq(1, ?DEFAULT_TESTS_COUNT)),
     ok.
@@ -1590,11 +1591,11 @@ get_transaction(_Config) ->
     aecore_suite_utils:mine_blocks(aecore_suite_utils:node_name(?NODE), 1),
     TxHashes = add_spend_txs(),
     aecore_suite_utils:mine_blocks(aecore_suite_utils:node_name(?NODE), 1),
-    Encodings = [default, message_pack, json],
+    Encodings = [default, ?BINARY_ENCODING, ?JSON_ENCODING],
     lists:foreach(
         fun(TxHash) ->
                 {ok, 200, #{<<"transaction">> := #{<<"hash">> := TxHash1}}} =
-                    get_tx(TxHash, json),
+                    get_tx(TxHash, ?JSON_ENCODING),
                 ?assertEqual(TxHash, TxHash1)
         end,
       TxHashes),
@@ -2054,7 +2055,7 @@ block_pending(_Config) ->
             {ok, 404, #{<<"reason">> := <<"Not mining, no pending block">>}} =
                     get_internal_block_preset("pending", Opt)
         end,
-        [default, message_pack, json]),
+        [default, ?BINARY_ENCODING, ?JSON_ENCODING]),
     ok = rpc(application, set_env, [aecore, expected_mine_rate,
                                     60 * 60 * 1000]), % aim at one block an hour
     add_spend_txs(),
@@ -2091,10 +2092,10 @@ block_pending(_Config) ->
 
     ExpectedPendingTxsObjects = maps:put(<<"data_schema">>,
                 <<"BlockWithJSONTxs">>,
-                block_to_endpoint_map(PendingBlock, #{tx_encoding => json})),
+                block_to_endpoint_map(PendingBlock, #{tx_encoding => ?JSON_ENCODING})),
     ct:log("Expected pending block with tx objects~p",
            [ExpectedPendingTxsObjects]),
-    {ok, PendingTxObjects} = GetPending(json),
+    {ok, PendingTxObjects} = GetPending(?JSON_ENCODING),
 
     % no block should have been mined, so the same prev_hash
     ValidateKeys(ExpectedPendingTxsObjects, PendingTxObjects, <<"prev_hash">>),
@@ -2132,8 +2133,8 @@ internal_get_block_generic(GetExpectedBlockFun, CallApiFun) ->
             true = equal_block_maps(BlockMap1, ExpectedBlockMap),
 
             ExpectedBlockMapTxsObjects = maps:merge(Specific(<<"BlockWithJSONTxs">>),
-                block_to_endpoint_map(ExpectedBlock, #{tx_encoding => json})),
-            {ok, 200, BlockMap2} = CallApiFun(Height, json),
+                block_to_endpoint_map(ExpectedBlock, #{tx_encoding => ?JSON_ENCODING})),
+            {ok, 200, BlockMap2} = CallApiFun(Height, ?JSON_ENCODING),
             ct:log("ExpectedBlockMapTxsObjects ~p, BlockMap2: ~p",
                    [ExpectedBlockMapTxsObjects, BlockMap2]),
             true = equal_block_maps(BlockMap, ExpectedBlockMapTxsObjects),
@@ -2304,7 +2305,7 @@ block_tx_index_not_founds(_Config) ->
                     lists:foreach(
                         fun(Opt) ->
                             {ok, Code, #{<<"reason">> := ErrMsg}} = Fun(H, I, Opt) end,
-                        [default, message_pack, json])
+                        [default, ?BINARY_ENCODING, ?JSON_ENCODING])
                 end,
                 Cases)
         end,
@@ -2368,9 +2369,9 @@ generic_block_tx_index_test(CallApi) when is_function(CallApi, 3)->
                         end,
                         lists:zip(AllTxs, TxsIdxs))
                 end,
-                [{default, message_pack, <<"SingleTxMsgPack">>},
-                 {message_pack, message_pack, <<"SingleTxMsgPack">>},
-                 {json, json, <<"SingleTxJSON">>}]),
+                [{default, ?BINARY_ENCODING, <<"SingleTxMsgPack">>},
+                 {?BINARY_ENCODING, ?BINARY_ENCODING, <<"SingleTxMsgPack">>},
+                 {?JSON_ENCODING, ?JSON_ENCODING, <<"SingleTxJSON">>}]),
             aecore_suite_utils:mine_blocks(aecore_suite_utils:node_name(?NODE), 1),
             add_spend_txs()
         end,
@@ -2407,7 +2408,7 @@ generic_range_test(GetTxsApi, HeightToKey) ->
     ok.
 
 single_range_test(HeightFrom, HeightTo, GetTxsApi, HeightToKey) ->
-    TxEncoding = [default, message_pack, json],
+    TxEncoding = [default, ?BINARY_ENCODING, ?JSON_ENCODING],
     AllTestedTxTypes = [[<<"spend_tx">>]],
     lists:foreach(
         fun({Encoding, TxTypes}) ->
@@ -2487,9 +2488,9 @@ expected_range_result(HeightFrom, HeightTo, TxEncoding0, TxTypes, Filter,
         case TxEncoding of
             default ->
                 <<"MsgPackTxs">>;
-            message_pack ->
+            ?BINARY_ENCODING ->
                 <<"MsgPackTxs">>;
-            json ->
+            ?JSON_ENCODING ->
                 <<"JSONTxs">>
           end,
     #{<<"data_schema">> => DataSchema,
@@ -2525,7 +2526,7 @@ block_txs_list_by_height_invalid_range(_Config) ->
                 fun(Opts) ->
                     Error = get_block_txs_list_by_height(From, To, Opts, #{})
                 end,
-                [default, message_pack, json])
+                [default, ?BINARY_ENCODING, ?JSON_ENCODING])
         end,
     InvalidRange = {ok, 400, #{<<"reason">> => <<"From's height is bigger than To's">>}},
     lists:foreach(
@@ -2559,7 +2560,7 @@ block_txs_list_by_hash_invalid_range(_Config) ->
                       Other -> error({expected, Error, got, Other})
                     end
                 end,
-                [default, message_pack, json])
+                [default, ?BINARY_ENCODING, ?JSON_ENCODING])
         end,
     {ok, GenBlockHash} = block_hash_by_height(0),
     {ok, Block1Hash} = block_hash_by_height(InitialHeight),
@@ -3874,7 +3875,7 @@ get_tx(TxHash, TxEncoding) ->
     http_request(Host, get, "tx/" ++ binary_to_list(TxHash), Params).
 
 get_tx_nonce(TxHash) ->
-    {ok, 200, Tx} = get_tx(TxHash, json),
+    {ok, 200, Tx} = get_tx(TxHash, ?JSON_ENCODING),
     maps:get(<<"nonce">>, maps:get(<<"tx">>, maps:get(<<"transaction">>, Tx))).
 
 post_spend_tx(Recipient, Amount, Fee) ->
@@ -3989,8 +3990,8 @@ get_internal_block_preset(Segment, TxObjects) ->
     http_request(Host, get, "block/" ++ Segment, Params).
 
 tx_encoding_param(default) -> #{};
-tx_encoding_param(json) -> #{tx_encoding => <<"json">>};
-tx_encoding_param(message_pack) -> #{tx_encoding => <<"message_pack">>}.
+tx_encoding_param(?JSON_ENCODING) -> #{tx_encoding => <<"json">>};
+tx_encoding_param(?BINARY_ENCODING) -> #{tx_encoding => <<"binary">>}.
 
 get_block_txs_count_by_height(Height) ->
     Host = internal_address(),
@@ -4656,7 +4657,7 @@ sign_and_post_tx(AccountPubKey, EncodedUnsignedTx) ->
     TxHash.
 
 tx_in_mempool(TxHash) ->
-    case get_tx(TxHash, json) of
+    case get_tx(TxHash, ?JSON_ENCODING) of
         {ok, 200, #{<<"transaction">> :=
                         #{<<"block_hash">> := <<"none">>}}} -> true;
         {ok, 200, #{<<"transaction">> :=
@@ -4667,7 +4668,7 @@ tx_in_mempool(TxHash) ->
     end.
 
 tx_in_chain(TxHash) ->
-    case get_tx(TxHash, json) of
+    case get_tx(TxHash, ?JSON_ENCODING) of
         {ok, 200, #{<<"transaction">> :=
                         #{<<"block_hash">> := <<"none">>}}} ->
             ct:log("Tx not mined, but in mempool"),
