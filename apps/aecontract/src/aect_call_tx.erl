@@ -152,16 +152,15 @@ signers(Tx, _) ->
     {ok, [caller_pubkey(Tx)]}.
 
 -spec process(tx(), aetx:tx_context(), aec_trees:trees(), aec_blocks:height(), non_neg_integer()) ->
-        {ok, aec_trees:trees()}.
-process(#contract_call_tx{nonce = Nonce,
-                          fee = Fee, gas =_Gas, gas_price = GasPrice, amount = Value
-                         } = CallTx, Context, Trees1, Height, ConsensusVersion) ->
-
+    {ok, aec_trees:trees()}.
+process(#contract_call_tx{nonce = Nonce, fee = Fee, gas =_Gas,
+                          gas_price = GasPrice, amount = Value} = CallTx,
+        Context, Trees1, Height, ConsensusVersion) ->
     %% Transfer the attached funds to the callee (before calling the contract!)
     CallerPubKey = caller_pubkey(CallTx),
     CalleePubKey = contract_pubkey(CallTx),
-    Trees2 = spend(CallerPubKey, CalleePubKey, Value,
-                   Nonce, Context, Height, Trees1, ConsensusVersion),
+    {Trees2, Events2} = spend(CallerPubKey, CalleePubKey, Value,
+                              Nonce, Context, Height, Trees1, ConsensusVersion),
 
     %% Create the call.
     Call0 = aect_call:new(caller_pubkey(CallTx),
@@ -172,7 +171,7 @@ process(#contract_call_tx{nonce = Nonce,
 
     %% Run the contract code. Also computes the amount of gas left and updates
     %% the call object.
-    {Call, Trees3} = run_contract(CallTx, Call0, Height, Trees2),
+    {Call, Trees3, Events3} = run_contract(CallTx, Call0, Height, Trees2, Events2),
 
     %% Charge the fee and the used gas to the caller (not if called from another contract!)
     AccountsTree1 = aec_trees:accounts(Trees3),
@@ -205,9 +204,9 @@ spend(CallerPubKey, CalleePubKey, Value, Nonce,_Context, Height, Trees,
                                 , payload => <<>>}),
     {ok, Trees1} =
         aetx:check_from_contract(SpendTx, Trees, Height, ConsensusVersion),
-    {ok, Trees2} =
+    {ok, Trees2, Events} =
         aetx:process_from_contract(SpendTx, Trees1, Height, ConsensusVersion),
-    Trees2.
+    {Trees2, Events}.
 
 run_contract(#contract_call_tx{ nonce  = _Nonce
             , vm_version = VmVersion
@@ -216,24 +215,26 @@ run_contract(#contract_call_tx{ nonce  = _Nonce
             , gas_price  = GasPrice
             , call_data  = CallData
             , call_stack = CallStack
-            } = Tx, Call, Height, Trees) ->
+            } = Tx, Call, Height, Trees, Events) ->
     Caller        = caller_pubkey(Tx),
     ContractPubKey= contract_pubkey(Tx),
     ContractsTree = aec_trees:contracts(Trees),
     Contract      = aect_state_tree:get_contract(ContractPubKey, ContractsTree),
     Code          = aect_contracts:code(Contract),
-    CallDef = #{ caller     => Caller
-         , contract   => ContractPubKey
-         , gas        => Gas
-         , gas_price  => GasPrice
-         , call_data  => CallData
-         , amount     => Amount
-         , call_stack => CallStack
-         , code       => Code
-         , call       => Call
-         , height     => Height
-         , trees      => Trees
-         },
+    CallDef = #{
+        caller     => Caller,
+	    contract   => ContractPubKey,
+	    gas        => Gas,
+	    gas_price  => GasPrice,
+	    call_data  => CallData,
+	    amount     => Amount,
+	    call_stack => CallStack,
+	    code       => Code,
+	    call       => Call,
+	    height     => Height,
+	    trees      => Trees,
+        events     => Events
+	},
     aect_dispatch:run(VmVersion, CallDef).
 
 serialize(#contract_call_tx{caller     = CallerId,

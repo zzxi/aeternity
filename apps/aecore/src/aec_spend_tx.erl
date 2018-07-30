@@ -159,7 +159,24 @@ process(#spend_tx{amount = Amount,
     AccountsTrees2 = aec_accounts_trees:enter(RecipientAccount, AccountsTrees1),
 
     Trees = aec_trees:set_accounts(Trees0, AccountsTrees2),
-    {ok, Trees}.
+    Events = [
+        #{
+            type => spend,
+            sender => SenderPubkey,
+            recipient => RecipientPubkey,
+            amount => Amount + Fee,
+            nonce => Nonce
+        },
+        #{
+            type => earn,
+            sender => SenderPubkey,
+            recipient => RecipientPubkey,
+            amount => Amount
+        }
+    ],
+
+    % TODO: Return events here
+    {ok, Trees, Events}.
 
 serialize(#spend_tx{sender = Sender,
                     recipient = Recipient,

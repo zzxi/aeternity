@@ -343,25 +343,25 @@ apply_txs_on_state_trees_strict(SignedTxs, Trees, Height, ConsensusVersion) ->
     apply_txs_on_state_trees(SignedTxs, Trees, Height, ConsensusVersion, true).
 
 apply_txs_on_state_trees(SignedTxs, Trees, Height, ConsensusVersion, Strict) ->
-    apply_txs_on_state_trees(SignedTxs, [], [], Trees, Height, ConsensusVersion, Strict).
+    apply_txs_on_state_trees(SignedTxs, [], [], [], Trees, Height, ConsensusVersion, Strict).
 
-apply_txs_on_state_trees([], ValidTxs, InvalidTxs, Trees, _Height,_ConsensusVersion,_Strict) ->
-    {ok, lists:reverse(ValidTxs), lists:reverse(InvalidTxs), Trees};
-apply_txs_on_state_trees([SignedTx | Rest], ValidTxs, InvalidTxs, Trees0, Height, ConsensusVersion, Strict) ->
+apply_txs_on_state_trees([], ValidTxs, InvalidTxs, Events, Trees, _Height,_ConsensusVersion,_Strict) ->
+    {ok, lists:reverse(ValidTxs), lists:reverse(InvalidTxs), Trees, Events};
+apply_txs_on_state_trees([SignedTx | Rest], ValidTxs, InvalidTxs, Events, Trees0, Height, ConsensusVersion, Strict) ->
     case aetx_sign:verify(SignedTx, Trees0) of
         ok ->
             Tx = aetx_sign:tx(SignedTx),
             case aetx:check(Tx, Trees0, Height, ConsensusVersion) of
                 {ok, Trees1} ->
-                    {ok, Trees2} = aetx:process(Tx, Trees1, Height, ConsensusVersion),
-                    apply_txs_on_state_trees(Rest, [SignedTx | ValidTxs], InvalidTxs,
+                    {ok, Trees2, NewEvents} = aetx:process(Tx, Trees1, Height, ConsensusVersion),
+                    apply_txs_on_state_trees(Rest, [SignedTx | ValidTxs], InvalidTxs, Events ++ NewEvents,
                                              Trees2, Height, ConsensusVersion, Strict);
                 {error, Reason} when Strict ->
                     lager:debug("Tx ~p cannot be applied due to an error ~p", [Tx, Reason]),
                     {error, Reason};
                 {error, Reason} when not Strict ->
                     lager:debug("Tx ~p cannot be applied due to an error ~p", [Tx, Reason]),
-                    apply_txs_on_state_trees(Rest, ValidTxs, [SignedTx | InvalidTxs], Trees0,
+                    apply_txs_on_state_trees(Rest, ValidTxs, [SignedTx | InvalidTxs], Trees0, Events,
                                              Height, ConsensusVersion, Strict)
             end;
         {error, signature_check_failed} = E when Strict ->
@@ -369,7 +369,7 @@ apply_txs_on_state_trees([SignedTx | Rest], ValidTxs, InvalidTxs, Trees0, Height
             E;
         {error, signature_check_failed} when not Strict ->
             lager:debug("Signed tx ~p is not correctly signed.", [SignedTx]),
-            apply_txs_on_state_trees(Rest, ValidTxs, [SignedTx | InvalidTxs], Trees0,
+            apply_txs_on_state_trees(Rest, ValidTxs, [SignedTx | InvalidTxs], Trees0, Events,
                                      Height, ConsensusVersion, Strict)
     end.
 

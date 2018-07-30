@@ -8,7 +8,7 @@
 
 -behaviour(aevm_chain_api).
 
--export([new_state/3, get_trees/1]).
+-export([new_state/3, get_trees/1, get_events/1]).
 
 %% aevm_chain_api callbacks
 -export([ call_contract/6,
@@ -35,6 +35,7 @@
 
 
 -record(state, { trees   :: aec_trees:trees()
+               , events = [] :: list() % TODO: Make type
                , height  :: aec_blocks:height()
                , account :: aec_keys:pubkey()            %% the contract account
                }).
@@ -58,6 +59,8 @@ new_state(Trees, Height, ContractAccount) ->
 get_trees(#state{ trees = Trees}) ->
     Trees.
 
+get_events(#state{events = Events}) -> Events.
+
 %% @doc Get the balance of the contract account.
 -spec get_balance(aec_keys:pubkey(), chain_state()) -> non_neg_integer().
 get_balance(PubKey, #state{ trees = Trees }) ->
@@ -71,10 +74,10 @@ get_store(#state{ account = PubKey, trees = Trees }) ->
 
 %% @doc Set the contract state store of the contract account.
 -spec set_store(aevm_chain_api:store(), chain_state()) -> chain_state().
-set_store(Store,  #state{ account = PubKey, trees = Trees } = State) ->
+set_store(Store,  #state{ account = PubKey, trees = Trees, events = Events } = State) ->
     CTree1 = do_set_store(Store, PubKey, Trees),
     Trees1 = aec_trees:set_contracts(Trees, CTree1),
-    State#state{ trees = Trees1 }.
+    State#state{ trees = Trees1, events = Events }.
 
 
 %% -- Primops ----------------------------
@@ -405,9 +408,9 @@ apply_transaction(Tx, #state{ trees = Trees, height = Height } = State) ->
     ConsensusVersion = aec_hard_forks:protocol_effective_at_height(Height),
     case aetx:check_from_contract(Tx, Trees, Height, ConsensusVersion) of
         {ok, Trees1} ->
-            {ok, Trees2} =
+            {ok, Trees2, Events} =
                 aetx:process_from_contract(Tx, Trees1, Height, ConsensusVersion),
-            State1 = State#state{ trees = Trees2 },
+            State1 = State#state{ trees = Trees2, events = Events },
             {ok, State1};
         {error, _} = E -> E
     end.

@@ -223,7 +223,7 @@ check_from_contract(#aetx{ cb = CB, tx = Tx }, Trees, Height, ConsensusVersion) 
               ConsensusVersion :: non_neg_integer()) ->
     {ok, NewTrees :: aec_trees:trees()}.
 process(#aetx{ cb = CB, tx = Tx }, Trees, Height, ConsensusVersion) ->
-    CB:process(Tx, aetx_transaction, Trees, Height, ConsensusVersion).
+    instantiate(Trees, CB:process(Tx, aetx_transaction, Trees, Height, ConsensusVersion)).
 
 -spec process_from_contract(Tx :: tx(), Trees :: aec_trees:trees(), Height :: non_neg_integer(),
                             ConsensusVersion :: non_neg_integer()) ->
@@ -231,6 +231,36 @@ process(#aetx{ cb = CB, tx = Tx }, Trees, Height, ConsensusVersion) ->
 
 process_from_contract(#aetx{ cb = CB, tx = Tx }, Trees, Height, ConsensusVersion) ->
     CB:process(Tx, aetx_contract, Trees, Height, ConsensusVersion).
+
+-include_lib("eunit/include/eunit.hrl").
+
+instantiate(Trees0, {ok, Trees, Events}) ->
+    ?assertEqual(Trees, update(Trees0, Events)),
+    {ok, Trees};
+instantiate(_Trees0, Other) ->
+    Other.
+
+update(Trees, []) ->
+    Trees;
+update(Trees, [Event|Events]) ->
+    update(update_event(Trees, Event), Events).
+
+update_event(Trees, #{type := spend, sender := Pubkey, amount := Amount, nonce := Nonce}) ->
+    Accounts = aec_trees:accounts(Trees),
+
+    {value, Account} = aec_accounts_trees:lookup(Pubkey, Accounts),
+    {ok, NewAccount} = aec_accounts:spend(Account, Amount, Nonce),
+    NewAccounts = aec_accounts_trees:enter(NewAccount, Accounts),
+
+    aec_trees:set_accounts(Trees, NewAccounts);
+update_event(Trees, #{type := earn, recipient := Pubkey, amount := Amount}) ->
+    Accounts = aec_trees:accounts(Trees),
+
+    {value, Account} = aec_accounts_trees:lookup(Pubkey, Accounts),
+    {ok, NewAccount} = aec_accounts:earn(Account, Amount),
+    NewAccounts = aec_accounts_trees:enter(NewAccount, Accounts),
+
+    aec_trees:set_accounts(Trees, NewAccounts).
 
 -spec serialize_for_client(Tx :: tx()) -> map().
 serialize_for_client(#aetx{ cb = CB, type = Type, tx = Tx }) ->

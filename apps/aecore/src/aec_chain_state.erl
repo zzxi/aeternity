@@ -296,6 +296,9 @@ internal_insert(Node, Block) ->
             %% Only add the block if we can do the whole
             %% transitive operation (i.e., calculate all the state
             %% trees, and update the pointers)
+
+            % TODO: Emit events here! Return from tx and fire
+            % Alternative: plug-in callback here to middleware, inside tx
             Fun = fun() ->
                           State = new_state_from_persistence(),
                           %% Keep track of which node we are actually

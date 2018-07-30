@@ -217,24 +217,27 @@ process(#contract_create_tx{nonce      = Nonce,
         Context, Trees0, Height, ConsensusVersion) ->
     OwnerPubKey = owner_pubkey(CreateTx),
 
-    {ContractPubKey, Contract, Trees1} = create_contract(CreateTx, Trees0),
+    Events0 = [],
+
+    {ContractPubKey, Contract, Trees1, Events1} = create_contract(CreateTx, Trees0, Events0),
 
     %% Charge the fee to the contract owner (caller)
     %% and transfer the funds (amount) to the contract account.
-    Trees2 =
+    {Trees2, Events2} =
         spend(OwnerPubKey, ContractPubKey, Amount, Fee,
-              Nonce, Context, Height, Trees1, ConsensusVersion),
+              Nonce, Context, Height, Trees1, Events1, ConsensusVersion),
 
     %% Create the init call.
     Call0 = aect_call:new(OwnerPubKey, Nonce, ContractPubKey, Height, GasPrice),
     %% Execute init calQl to get the contract state and return value
-    {CallRes, Trees3} =
-        run_contract(CreateTx, Call0, Height, Trees2, Contract, ContractPubKey),
+    {CallRes, Trees3, Events3} =
+        run_contract(CreateTx, Call0, Height, Trees2, Events2, Contract, ContractPubKey),
 
     case aect_call:return_type(CallRes) of
         ok ->
+            % TODO: Events here?
             initialize_contract(CreateTx, ContractPubKey, Contract,
-                                CallRes, Context, Trees3, Height,
+                                CallRes, Context, Trees3, Events3, Height,
                                 ConsensusVersion);
         E ->
             lager:debug("Init call error ~w ~w~n",[E, CallRes]),
@@ -244,14 +247,14 @@ process(#contract_create_tx{nonce      = Nonce,
             %% (The VM will decide how much gas is used: 0, some, all.)
             Trees5 = aect_utils:insert_call_in_trees(CallRes, Trees0),
             GasCost = aect_call:gas_used(CallRes) * GasPrice,
-            Trees6 =
+            {Trees6, Events6} =
                 spend(OwnerPubKey, ContractPubKey, 0, Fee+GasCost, Nonce,
-                      Context, Height, Trees5, ConsensusVersion),
-            {ok, Trees6}
+                      Context, Height, Trees5, Events3, ConsensusVersion),
+            {ok, Trees6, Events6}
     end.
 
 
-create_contract(CreateTx, Trees0) ->
+create_contract(CreateTx, Trees0, Events) ->
     %% Create the contract and insert it into the contract state tree
     %%   The public key for the contract is generated from the owners pubkey
     %%   and the nonce, so that no one has the private key.
@@ -260,11 +263,11 @@ create_contract(CreateTx, Trees0) ->
     ContractsTree0  = aec_trees:contracts(Trees0),
     ContractsTree1  = aect_state_tree:insert_contract(Contract, ContractsTree0),
     Trees1          = aec_trees:set_contracts(Trees0, ContractsTree1),
-    {ContractPubKey, Contract, Trees1}.
+    {ContractPubKey, Contract, Trees1, Events}.
 
 
 spend(SenderPubKey, ReceiverPubKey, Value, Fee, Nonce,
-      Context, Height, Trees, ConsensusVersion) ->
+      Context, Height, Trees, Events, ConsensusVersion) ->
     {ok, SpendTx} = aec_spend_tx:new(
                       #{ sender => aec_id:create(account, SenderPubKey)
                        , recipient => aec_id:create(account, ReceiverPubKey)
@@ -276,13 +279,13 @@ spend(SenderPubKey, ReceiverPubKey, Value, Fee, Nonce,
     Trees1 = aec_trees:ensure_account(ReceiverPubKey, Trees),
     case Context of
         aetx_contract ->
-            {ok, Trees2} =
+            {ok, Trees2, Events2} =
                 aetx:process_from_contract(SpendTx, Trees1, Height, ConsensusVersion),
-            Trees2;
+            {Trees2, Events ++ Events2};
         aetx_transaction ->
             {ok, Trees2} =
                 aetx:process(SpendTx, Trees1, Height, ConsensusVersion),
-            Trees2
+            {Trees2, Events}
     end.
 
 
@@ -294,7 +297,7 @@ run_contract(#contract_create_tx{ nonce      =_Nonce
                                 , gas_price  = GasPrice
                                 , call_data  = CallData
                                 } = Tx,
-            Call, Height, Trees,_Contract, ContractPubKey)->
+            Call, Height, Trees, Events, _Contract, ContractPubKey)->
     Caller = owner_pubkey(Tx),
     CallStack = [], %% TODO: should we have a call stack for create_tx also
                     %% when creating a contract in a contract.
@@ -310,6 +313,7 @@ run_contract(#contract_create_tx{ nonce      =_Nonce
                , call       => Call
                , height     => Height
                , trees      => Trees
+               , events     => Events
                },
 
     aect_dispatch:run(VmVersion, CallDef).
@@ -322,7 +326,7 @@ initialize_contract(#contract_create_tx{nonce      = Nonce,
                                         deposit    = Deposit,
                                         fee   =_Fee} = Tx,
                     ContractPubKey, Contract,
-                    CallRes,  Context, Trees, Height, ConsensusVersion) ->
+                    CallRes,  Context, Trees, Events, Height, ConsensusVersion) ->
     OwnerPubKey = owner_pubkey(Tx),
 
     %% Insert the call into the state tree for one block.
@@ -333,9 +337,9 @@ initialize_contract(#contract_create_tx{nonce      = Nonce,
     %% Spend Gas and burn
     %% Deposit (the deposit is stored in the contract.)
     GasCost = aect_call:gas_used(CallRes) * GasPrice,
-    Trees2 =
+    {Trees2, Events2} =
         spend(OwnerPubKey, ContractPubKey, 0, Deposit+GasCost, Nonce,
-              Context, Height, Trees1,
+              Context, Height, Trees1, Events,
               ConsensusVersion),
 
     %% TODO: Move ABI specific code to abi module(s).
@@ -354,7 +358,7 @@ initialize_contract(#contract_create_tx{nonce      = Nonce,
         end,
     ContractsTree0 = aec_trees:contracts(Trees2),
     ContractsTree1 = aect_state_tree:enter_contract(Contract1, ContractsTree0),
-    {ok, aec_trees:set_contracts(Trees2, ContractsTree1)}.
+    {ok, aec_trees:set_contracts(Trees2, ContractsTree1), Events2}.
 
 
 
