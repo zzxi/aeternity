@@ -284,7 +284,7 @@ spend(SenderPubKey, ReceiverPubKey, Value, Fee, Nonce,
             {Trees2, Events ++ Events2};
         aetx_transaction ->
             {ok, Trees2} =
-                aetx:process(SpendTx, Trees1, Height, ConsensusVersion),
+                aetx:process_from_transaction(SpendTx, Trees1, Height, ConsensusVersion),
             {Trees2, Events}
     end.
 

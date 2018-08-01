@@ -175,24 +175,41 @@ process(#contract_call_tx{nonce = Nonce, fee = Fee, gas =_Gas,
 
     %% Charge the fee and the used gas to the caller (not if called from another contract!)
     AccountsTree1 = aec_trees:accounts(Trees3),
-    AccountsTree2 =
+    {AccountsTree2, Events4} =
         case Context of
             aetx_contract    ->
-                AccountsTree1;
+                {AccountsTree1, Events3};
             aetx_transaction ->
                 %% When calling from the top-level we charge Fee and Gas as well.
                 GasCost       = aect_call:gas_used(Call) * GasPrice,
                 Amount        = Fee + GasCost,
                 Caller2       = aec_accounts_trees:get(CallerPubKey, AccountsTree1),
                 {ok, Caller3} = aec_accounts:spend(Caller2, Amount, Nonce),
-                aec_accounts_trees:enter(Caller3, AccountsTree1)
+                {
+                    aec_accounts_trees:enter(Caller3, AccountsTree1),
+                    Events3 ++ [
+                        #{
+                            type => spend,
+                            sender => Caller2,
+                            recipient => ,
+                            amount => Amount,
+                            nonce => Nonce
+                        },
+                        #{
+                            type => earn,
+                            sender => SenderPubkey,
+                            recipient => RecipientPubkey,
+                            amount => Amount
+                        }
+                    ]
+                }
         end,
     Trees4 = aec_trees:set_accounts(Trees3, AccountsTree2),
 
     %% Insert the call into the state tree. This is mainly to remember what the
     %% return value was so that the caller can access it easily.
     %% Each block starts with an empty calls tree.
-    {ok, aect_utils:insert_call_in_trees(Call, Trees4)}.
+    {ok, aect_utils:insert_call_in_trees(Call, Trees4), Events3}.
 
 spend(CallerPubKey, CalleePubKey, Value, Nonce,_Context, Height, Trees,
       ConsensusVersion) ->

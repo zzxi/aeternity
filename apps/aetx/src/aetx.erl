@@ -17,6 +17,7 @@
         , origin/1
         , process/4
         , process_from_contract/4
+        , process_from_transaction/4
         , serialize_for_client/1
         , serialize_to_binary/1
         , signers/2
@@ -231,6 +232,9 @@ process(#aetx{ cb = CB, tx = Tx }, Trees, Height, ConsensusVersion) ->
 
 process_from_contract(#aetx{ cb = CB, tx = Tx }, Trees, Height, ConsensusVersion) ->
     CB:process(Tx, aetx_contract, Trees, Height, ConsensusVersion).
+
+process_from_transaction(#aetx{cb = CB, tx = Tx}, Trees, Height, ConsensusVersion) ->
+    CB:process(Tx, aetx_transaction, Trees, Height, ConsensusVersion).
 
 -include_lib("eunit/include/eunit.hrl").
 
