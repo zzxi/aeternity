@@ -21,7 +21,7 @@ tx_pool_test_() ->
              aec_test_utils:start_chain_db(),
              aec_test_utils:mock_genesis(),
              GB = aec_test_utils:genesis_block(),
-             aec_chain_state:insert_block(GB),
+             {ok, _} = aec_chain_state:insert_block(GB), % FIXME: [effects] Verify?
              aec_test_utils:mock_block_target_validation(), %% Mocks aec_governance.
              {ok, _} = aec_tx_pool:start_link(),
              %% Start `aec_keys` merely for generating realistic test
@@ -81,12 +81,12 @@ tx_pool_test_() ->
                   [{PubKey1, 100}, {PubKey2, 100}]),
                {GenesisBlock, _} = aec_block_genesis:genesis_block_with_state(),
                aec_test_utils:start_chain_db(),
-               ok = aec_chain_state:insert_block(GenesisBlock),
+               {ok, _} = aec_chain_state:insert_block(GenesisBlock), % FIXME: [effects] Verify?
 
                %% The first block needs to be a key-block
                {ok, KeyBlock1} = aec_block_key_candidate:create(aec_chain:top_block(), PubKey1),
                {ok, KeyHash1} = aec_blocks:hash_internal_representation(KeyBlock1),
-               ok = aec_chain_state:insert_block(KeyBlock1),
+               {ok, _} = aec_chain_state:insert_block(KeyBlock1), % FIXME: [effects] Verify?
                ?assertEqual(KeyHash1, aec_chain:top_block_hash()),
 
                TopBlock = aec_chain:top_block(),
@@ -105,7 +105,7 @@ tx_pool_test_() ->
                {ok, Candidate1} = aec_keys:sign_micro_block(USCandidate1),
 
                {ok, CHash1} = aec_blocks:hash_internal_representation(Candidate1),
-               ok = aec_chain_state:insert_block(Candidate1),
+               {ok, _} = aec_chain_state:insert_block(Candidate1), % FIXME: [effects] Verify?
                ?assertEqual(CHash1, aec_chain:top_block_hash()),
 
                %% Check that we uses all the txs in mempool
@@ -126,7 +126,7 @@ tx_pool_test_() ->
                {ok, USCandidate3, _} = aec_block_micro_candidate:create(aec_chain:top_block()),
                {ok, Candidate3} = aec_keys:sign_micro_block(USCandidate3),
 
-               ok = aec_chain_state:insert_block(Candidate3),
+               {ok, _} = aec_chain_state:insert_block(Candidate3), % FIXME: [effects] Verify?
                TopBlockFork1 = aec_chain:top_block(),
                {ok, KeyBlock2} = aec_block_key_candidate:create(TopBlockFork1, PubKey1),
                {ok, CHashFork1} = aec_blocks:hash_internal_representation(KeyBlock2),
@@ -136,13 +136,13 @@ tx_pool_test_() ->
                {ok, USCandidate4, _} = aec_block_micro_candidate:create(aec_chain:top_block()),
                {ok, Candidate4} = aec_keys:sign_micro_block(USCandidate4),
 
-               ok = aec_chain_state:insert_block(Candidate4),
+               {ok, _} = aec_chain_state:insert_block(Candidate4), % FIXME: [effects] Verify?
                TopBlockFork2 = aec_chain:top_block(),
                {ok, KeyBlock3} = aec_block_key_candidate:create(TopBlockFork2, PubKey1),
                {ok, CHashFork2} = aec_blocks:hash_internal_representation(KeyBlock3),
 
                %% Push the keyblock with the longest chain of micro blocks
-               ok = aec_chain_state:insert_block(KeyBlock3),
+               {ok, _} = aec_chain_state:insert_block(KeyBlock3), % FIXME: [effects] Verify?
                ?assertEqual(CHashFork2, aec_chain:top_block_hash()),
                aec_tx_pool:top_change(CHash1, CHashFork2),
                %% The mempool should now be empty
@@ -156,7 +156,7 @@ tx_pool_test_() ->
 
                %% Push the keyblock with the shorter chain of micro blocks
                %% and check that it takes over.
-               ok = aec_chain_state:insert_block(KeyBlock2),
+               {ok, _} = aec_chain_state:insert_block(KeyBlock2), % FIXME: [effects] Verify?
                ?assertEqual(CHashFork1, aec_chain:top_block_hash()),
 
                %% Ping tx_pool for top change
@@ -268,12 +268,12 @@ tx_pool_test_() ->
                   [{PubKey1, 100}, {PubKey2, 100}]),
                {GenesisBlock, _} = aec_block_genesis:genesis_block_with_state(),
                aec_test_utils:start_chain_db(),
-               ok = aec_chain_state:insert_block(GenesisBlock),
+               {ok, _} = aec_chain_state:insert_block(GenesisBlock), % FIXME: [effects] Verify?
 
                %% The first block needs to be a key-block
                {ok, KeyBlock1} = aec_block_key_candidate:create(aec_chain:top_block(), PubKey1),
                {ok, KeyHash1} = aec_blocks:hash_internal_representation(KeyBlock1),
-               ok = aec_chain_state:insert_block(KeyBlock1),
+               {ok, _} = aec_chain_state:insert_block(KeyBlock1), % FIXME: [effects] Verify?
                ?assertEqual(KeyHash1, aec_chain:top_block_hash()),
 
                TopBlock = aec_chain:top_block(),
@@ -284,7 +284,7 @@ tx_pool_test_() ->
                {ok, USCandidate1, _} = aec_block_micro_candidate:create(TopBlock),
                {ok, Candidate1} = aec_keys:sign_micro_block(USCandidate1),
                {ok, Top} = aec_blocks:hash_internal_representation(Candidate1),
-               ok = aec_chain_state:insert_block(Candidate1),
+               {ok, _} = aec_chain_state:insert_block(Candidate1), % FIXME: [effects] Verify?
                ?assertEqual(Top, aec_chain:top_block_hash()),
 
                %% Now we should reject the same transaction since it
@@ -326,7 +326,7 @@ tx_pool_test_() ->
                %% fail on TTL
                {ok, Candidate2} = aec_block_key_candidate:create(aec_chain:top_block(), PubKey1),
                {ok, Top2} = aec_blocks:hash_internal_representation(Candidate2),
-               ok = aec_chain_state:insert_block(Candidate2),
+               {ok, _} = aec_chain_state:insert_block(Candidate2), % FIXME: [effects] Verify?
                ?assertEqual(Top2, aec_chain:top_block_hash()),
 
                STx5 = a_signed_tx(PubKey1, new_pubkey(), 6, 1, 1),
@@ -338,7 +338,7 @@ tx_pool_test_() ->
         fun() ->
             %% initialize chain
             {GenesisBlock, _} = aec_block_genesis:genesis_block_with_state(),
-            ok = aec_chain_state:insert_block(GenesisBlock),
+            {ok, _} = aec_chain_state:insert_block(GenesisBlock), % FIXME: [effects] Verify?
 
             %% Prepare three transactions
             PubKey = new_pubkey(),

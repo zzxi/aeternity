@@ -24,7 +24,8 @@
 -record(account, {
           id             :: aec_id:id(),
           balance = 0    :: non_neg_integer(),
-          nonce = 0      :: non_neg_integer()}).
+          nonce = 0      :: non_neg_integer(),
+          effects = []}). % TODO: Add type spec
 
 -opaque account() :: #account{}.
 -export_type([account/0, deterministic_account_binary_with_pubkey/0]).

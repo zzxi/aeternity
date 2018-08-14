@@ -20,11 +20,13 @@
          calls/1,
          contracts/1,
          set_accounts/2,
+         set_accounts/3,
          set_calls/2,
          set_channels/2,
          set_contracts/2,
          set_ns/2,
-         set_oracles/2
+         set_oracles/2,
+         effects/1
         ]).
 
 -export([ deserialize_from_db/1
@@ -61,7 +63,8 @@
           channels  :: aesc_state_tree:tree(),
           contracts :: aect_state_tree:tree(),
           ns        :: aens_state_tree:tree(),
-          oracles   :: aeo_state_tree:tree()}).
+          oracles   :: aeo_state_tree:tree(),
+          effects = []}).
 
 -record(poi, {
           accounts  :: part_poi(),
@@ -172,6 +175,10 @@ accounts(Trees) ->
 set_accounts(Trees, Accounts) ->
     Trees#trees{accounts = Accounts}.
 
+-spec set_accounts(trees(), aec_accounts_trees:tree(), list()) -> trees().
+set_accounts(#trees{effects = Effects0} = Trees, Accounts, Effects) ->
+    Trees#trees{accounts = Accounts, effects = Effects0 ++ Effects}.
+
 -spec channels(trees()) -> aesc_state_tree:tree().
 channels(Trees) ->
     Trees#trees.channels.
@@ -217,6 +224,9 @@ contracts(Trees) ->
 -spec set_contracts(trees(), aect_state_tree:tree()) -> trees().
 set_contracts(Trees, Contracts) ->
     Trees#trees{contracts = Contracts}.
+
+-spec effects(trees()) -> list(). % TODO: Create type
+effects(Trees) -> Trees#trees.effects.
 
 %%%=============================================================================
 %%% Serialization for db storage

@@ -149,7 +149,7 @@ reinit_chain() ->
 
 init(Options) ->
     process_flag(trap_exit, true),
-    ok     = init_chain_state(),
+    {ok, _Effects} = init_chain_state(), % FIXME: [effects] What to do here?
     TopBlockHash = aec_chain:top_block_hash(),
     TopKeyBlockHash = aec_chain:top_key_block_hash(),
     Consensus = #consensus{micro_block_cycle = aec_governance:micro_block_cycle(),
@@ -173,9 +173,9 @@ init_chain_state() ->
     case aec_chain:genesis_hash() of
         undefined ->
             {GB, _GBState} = aec_block_genesis:genesis_block_with_state(),
-            ok = aec_chain_state:insert_block(GB);
+            {ok, _Effects} = aec_chain_state:insert_block(GB); % FIXME: [effects] What to do here?
         Hash when is_binary(Hash) ->
-            ok
+            {ok, []} % FIXME: [effects] What to insert here? Empty list?
     end.
 
 reinit_chain_state() ->
@@ -848,7 +848,7 @@ handle_add_block(Header, Block, State, Origin) ->
             case aec_validation:validate_block_no_signature(Block) of
                 ok ->
                     case aec_chain_state:insert_block(Block) of
-                        ok ->
+                        {ok, _Effects} -> % FIXME: [effects] What to do here?
                             maybe_publish_block(Origin, Block),
                             case preempt_if_new_top(State, Origin) of
                                 no_change ->

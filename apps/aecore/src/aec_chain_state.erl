@@ -45,28 +45,24 @@ get_n_key_headers_backward_from(Header, N) ->
 -spec insert_block(#block{} | map()) -> 'ok' | {'error', any()}.
 insert_block(#{ key_block := KeyBlock, micro_blocks := MicroBlocks, dir := forward }) ->
     %% First insert key_block
-    case insert_block(KeyBlock) of
-        ok ->
-            lists:foldl(fun(MB, ok) -> insert_block(MB);
-                           (_MB, Err = {error, _}) -> Err
-                        end, ok, MicroBlocks);
-        Err = {error, _} ->
-            Err
-    end;
+    insert_blocks([KeyBlock|MicroBlocks]);
 insert_block(#{ key_block := KeyBlock, micro_blocks := MicroBlocks, dir := backward }) ->
     %% First insert micro_blocks
-    case lists:foldl(fun(MB, ok) -> insert_block(MB);
-                        (_MB, Err = {error, _}) -> Err
-                     end, ok, MicroBlocks) of
-        ok ->
-            insert_block(KeyBlock);
-        Err = {error, _} ->
-            Err
-    end;
+    insert_blocks(MicroBlocks ++ [KeyBlock]);
 insert_block(Block) ->
     Node = wrap_block(Block),
     try internal_insert(Node, Block)
     catch throw:?internal_error(What) -> {error, What}
+    end.
+
+insert_blocks(Blocks) -> insert_blocks(Blocks, []).
+
+insert_blocks([], Effects) ->
+    {ok, Effects};
+insert_blocks([Block|Blocks], Effects) ->
+    case insert_blocks(Block) of
+        {ok, NewEffects} -> insert_blocks(Blocks, Effects ++ NewEffects);
+        Error            -> Error
     end.
 
 -spec hash_is_connected_to_genesis(binary()) -> boolean().
@@ -129,6 +125,7 @@ new_state_from_persistence() ->
                   #{ type                  => ?MODULE
                    , top_block_hash        => aec_db:get_top_block_hash()
                    , genesis_block_hash    => aec_db:get_genesis_hash()
+                   , effects               => []
                    }
           end,
     aec_db:ensure_transaction(Fun).
@@ -306,12 +303,12 @@ internal_insert(Node, Block) ->
                           ok = db_put_node(Block, hash(Node)),
                           State2 = update_state_tree(Node, maybe_add_genesis_hash(State1, Node)),
                           persist_state(State2),
-                          ok
+                          {ok, maps:get(effects, State2)}
                   end,
             try aec_db:ensure_transaction(Fun)
             catch exit:{aborted, {throw, ?internal_error(What)}} -> internal_error(What)
             end;
-        {ok, Node} -> ok;
+        {ok, Node} -> {ok, []};
         {ok, Old} -> internal_error({same_key_different_content, Node, Old})
     end.
 
@@ -456,14 +453,16 @@ update_state_tree(Node, State) ->
             handle_top_block_change(OldTopHash, NewTopDifficulty, State1)
     end.
 
-update_state_tree(Node, TreesIn, ForkInfo, State) ->
+update_state_tree(Node, TreesIn, ForkInfo, #{effects := Effects0} = State) ->
     case db_find_state(hash(Node)) of
         {ok,_Trees,_ForkInfo} ->
             error({found_already_calculated_state, hash(Node)});
         error ->
             case apply_and_store_state_trees(Node, TreesIn, ForkInfo, State) of
                 {ok, TreesOut, ForkInfoOut} ->
-                    update_next_state_tree(Node, TreesOut, ForkInfoOut, State);
+                    Effects = aec_trees:effects(TreesOut),
+                    State1 = State#{effects := Effects0 ++ Effects},
+                    update_next_state_tree(Node, TreesOut, ForkInfoOut, State1);
                 error ->
                     {State, ForkInfo#fork_info.difficulty}
             end

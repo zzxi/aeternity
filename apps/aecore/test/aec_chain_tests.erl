@@ -77,7 +77,7 @@ basic_access_test_block_chain() ->
     [B0H, B1H, B2H] = [block_hash(B) || B <- Chain],
 
     %% Add a couple of blocks to the chain.
-    ok = insert_block(B0),
+    {ok, _} = insert_block(B0),
 
     ?assertEqual(error, get_header(B1H)),
     ?assertEqual(error, get_header(B2H)),
@@ -85,11 +85,11 @@ basic_access_test_block_chain() ->
     ?assertEqual(error, get_block(B2H)),
 
     ?compareBlockResults({ok, B0}, {ok, top_block()}),
-    ok = insert_block(B1),
+    {ok, _} = insert_block(B1),
     ?assertEqual(BH1, top_header()),
     ?compareBlockResults({ok, B1}, {ok, top_block()}),
 
-    ok = insert_block(B2),
+    {ok, _} = insert_block(B2),
     ?assertEqual(BH2, top_header()),
     ?compareBlockResults({ok, B2}, {ok, top_block()}),
 
@@ -211,15 +211,15 @@ broken_chain_postponed_validation() ->
 
     %% Insert the second block of the fork with a bad root hash
     Bad = B2#block{root_hash = <<"I'm not really a hash">>},
-    ok = insert_block(Bad),
+    {ok, _} = insert_block(Bad),
 
     {ok, Hash} = aec_blocks:hash_internal_representation(Bad),
     B3Bad = B3#block{prev_hash = Hash},
-    ok = insert_block(B3Bad),
+    {ok, _} = insert_block(B3Bad),
 
     %% Try to insert the first block of the fork
     %% It should succeed since the B1 block is not the faulty one...
-    ok = insert_block(B1),
+    {ok, _} = insert_block(B1),
 
     %% ... but the top should not have changed...
     ?assertEqual(TopHash, top_block_hash()),
@@ -237,7 +237,7 @@ broken_chain_wrong_height() ->
     ok = write_blocks_to_chain([B0, B1]),
 
     %% Check that we can insert the unmodified last block
-    ?assertEqual(ok, insert_block(B2)),
+    ?assertMatch({ok, _}, insert_block(B2)),
 
     %% Change the height of the last block to an incompatible height.
     ?assertEqual({error, height_inconsistent_for_keyblock_with_previous_hash},
@@ -253,7 +253,7 @@ broken_chain_wrong_state_hash() ->
     ok = write_blocks_to_chain([B0, B1]),
 
     %% Check that we can insert the unmodified last block
-    ?assertEqual(ok, insert_block(B2)),
+    ?assertMatch({ok, _}, insert_block(B2)),
 
     %% Change the state hash to something wrong.
     Hash = B2#block.root_hash,
@@ -296,7 +296,7 @@ broken_chain_invalid_transaction() ->
                  insert_block(MB1#block{txs = BogusTxs})),
 
     %% Check that we can insert the unmodified last block
-    ?assertEqual(ok, insert_block(MB1)),
+    ?assertMatch({ok, _}, insert_block(MB1)),
     ok.
 
 %%%===================================================================
@@ -446,22 +446,22 @@ constant_target_at_the_beginning_of_the_chain() ->
           [?GENESIS_TARGET, ?GENESIS_TARGET, ?GENESIS_TARGET, ?GENESIS_TARGET], 222),
 
     %% Insert genesis
-    ok = insert_block(B0),
+    {ok, _} = insert_block(B0),
 
     %% Do not allow too low target
     B1TooLowTarget = B1#block{target = trunc(?GENESIS_TARGET / 2)},
     ?assertMatch({error, {target_not_equal_to_parent, _, _, _}},
                  insert_block(B1TooLowTarget)),
 
-    ok = insert_block(B1),
-    ok = insert_block(B2),
+    {ok, _} = insert_block(B1),
+    {ok, _} = insert_block(B2),
 
     %% Do not allow too high target
     B3TooHighTarget = B3#block{target = 2 * ?GENESIS_TARGET},
     ?assertMatch({error, {target_not_equal_to_parent, _, _, _}},
                  insert_block(B3TooHighTarget)),
 
-    ok = insert_block(B3),
+    {ok, _} = insert_block(B3),
 
     %% target_not_equal_to_parent does not kick in for block with height = 4
     %% For block with height 4, block with height 1 is taken for difficulty recalculations
@@ -486,10 +486,10 @@ target_verified_based_on_calculations() ->
 
     [B0, B1, B2, B3, B4, B5] = Chain = gen_blocks_only_chain(ChainData),
 
-    ok = insert_block(B0),
-    ok = insert_block(B1),
-    ok = insert_block(B2),
-    ok = insert_block(B3),
+    {ok, _} = insert_block(B0),
+    {ok, _} = insert_block(B1),
+    {ok, _} = insert_block(B2),
+    {ok, _} = insert_block(B3),
 
     %% Try to insert block with height=4 with an incorrect target
     BadB4 = B4#block{target = Bad4},
@@ -497,8 +497,8 @@ target_verified_based_on_calculations() ->
                  insert_block(BadB4)),
 
     %% Insert block with height=4 with expected target
-    ok = insert_block(B4),
-    ok = insert_block(B5),
+    {ok, _} = insert_block(B4),
+    {ok, _} = insert_block(B5),
 
     ?assertEqual(block_hash(lists:last(Chain)), top_block_hash()),
     ok.
@@ -523,14 +523,14 @@ test_postponed_target_verification() ->
     ?assertEqual(TopBlockHash, top_block_hash()),
 
     %% Insert all blocks of alt chain chain except B4 (which prevents from target validation)
-    ok = insert_block(B1),
-    ok = insert_block(B2),
-    ok = insert_block(B3),
-    ok = insert_block(B5),
-    ok = insert_block(B6),
+    {ok, _} = insert_block(B1),
+    {ok, _} = insert_block(B2),
+    {ok, _} = insert_block(B3),
+    {ok, _} = insert_block(B5),
+    {ok, _} = insert_block(B6),
 
     %% Insert B4, which should make AltChain take over...
-    ok = insert_block(B4),
+    {ok, _} = insert_block(B4),
 
     %% ... but already inserted B5 has too high target (it was mined too easily)
     ?assertEqual(TopBlockHash, top_block_hash()),
@@ -559,7 +559,7 @@ total_difficulty_test_() ->
     }.
 
 total_difficulty_only_genesis() ->
-    ok = insert_block(genesis_block()),
+    {ok, _} = insert_block(genesis_block()),
     {ok, Difficulty} = difficulty_at_top_block(),
     ?assertDifficultyEq(?GENESIS_DIFFICULTY, Difficulty).
 
@@ -658,11 +658,11 @@ fork_out_of_order() ->
     restart_chain_db(),
     %% Add the chain with the fork node as the last entry.
     ok = write_blocks_to_chain(lists:droplast(blocks_only_chain(CommonChain))),
-    ok = insert_block(lists:last(blocks_only_chain(EasyChain))),
-    ok = insert_block(lists:last(blocks_only_chain(HardChain))),
+    {ok, _} = insert_block(lists:last(blocks_only_chain(EasyChain))),
+    {ok, _} = insert_block(lists:last(blocks_only_chain(HardChain))),
 
     %% The last block to enter is the last common node.
-    ok = insert_block(lists:last(blocks_only_chain(CommonChain))),
+    {ok, _} = insert_block(lists:last(blocks_only_chain(CommonChain))),
     ?assertEqual(block_hash(lists:last(blocks_only_chain(HardChain))),
                  top_block_hash()),
     ok.
@@ -851,7 +851,7 @@ time_summary_no_genesis() ->
 
 time_summary_only_genesis() ->
     Genesis = genesis_block(),
-    ok = insert_block(Genesis),
+    {ok, _} = insert_block(Genesis),
 
     ?assertEqual([{aec_blocks:height(Genesis),
                    aec_blocks:time_in_msecs(Genesis),
@@ -1038,19 +1038,19 @@ key_hash_orphaned_chain() ->
     ?assertEqual(true , aec_blocks:is_key_block(KB3)),
 
     %% Insert first part of the chain
-    ok = insert_block(KB0),
-    ok = insert_block(KB1),
+    {ok, _} = insert_block(KB0),
+    {ok, _} = insert_block(KB1),
 
     %% Insert orphaned rest of the chain (no MB1)
-    ok = insert_block(KB2),
-    ok = insert_block(MB2),
-    ok = insert_block(KB3),
+    {ok, _} = insert_block(KB2),
+    {ok, _} = insert_block(MB2),
+    {ok, _} = insert_block(KB3),
 
     %% KB1 is still our top
     ?assertEqual(KB1Hash, aec_chain:top_block_hash()),
 
     %% Insert delayed MB1, so that the chain is joined
-    ok = insert_block(MB1),
+    {ok, _} = insert_block(MB1),
 
     %% KB3 is now our top
     ?assertEqual(KB3Hash, aec_chain:top_block_hash()),
@@ -1086,7 +1086,7 @@ teardown_meck_and_keys(TmpDir) ->
     aec_test_utils:aec_keys_cleanup(TmpDir).
 
 write_blocks_to_chain([H|T]) ->
-    ok = insert_block(H),
+    {ok, _} = insert_block(H),
     write_blocks_to_chain(T);
 write_blocks_to_chain([]) ->
     ok.
