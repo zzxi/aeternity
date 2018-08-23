@@ -21,7 +21,7 @@
 -define(SERVER, ?MODULE).
 
 -record(sub, { chain = [], chain_tx = [] }).
--record(state, { subscribed = #sub{} }).
+-record(state, { subscribed = #sub{}, top_hash }).
 
 -type id() :: {ws, ws_handler:id()}.
 -type event() :: {chain | chain_tx, term()}.
@@ -58,7 +58,7 @@ init([]) ->
     aec_events:subscribe(top_changed),
     aec_events:subscribe(block_created),
     aec_events:subscribe(micro_block_created),
-    {ok, #state{}}.
+    {ok, #state{top_hash = aec_chain:top_block_hash()}}.
 
 handle_call(_Msg, _From, State) ->
     {reply, ok, State}.
@@ -80,13 +80,20 @@ handle_info({gproc_ps_event, Event = block_created, #{ info := Block }}, State) 
 handle_info({gproc_ps_event, Event = micro_block_created, #{ info := Block }}, State) ->
     notify_subscribers(Event, Block, State).
 
-notify_subscribers(top_changed = Event, Block, State = #state{ subscribed = Subs }) ->
-    notify_chain_subscribers(Event, Block, Subs),
-    case aec_blocks:type(Block) of
-        micro -> notify_tx_subscribers(aec_blocks:txs(Block), Subs);
-        key   -> ok
-    end,
-    {noreply, State};
+notify_subscribers(top_changed = Event, Block, State = #state{ subscribed = Subs, top_hash = PrevTopHash }) ->
+    {ok, TopHash} = aec_blocks:hash_internal_representation(Block),
+    {ok, AncestorHash} = aec_chain:find_common_ancestor(PrevTopHash, TopHash),
+    {ok, Blocks} = aec_chain:get_block_range_by_hash(AncestorHash, TopHash),
+
+    lists:foreach(fun(B) ->
+        notify_chain_subscribers(Event, B, Subs),
+        case aec_blocks:type(B) of
+            micro -> notify_tx_subscribers(aec_blocks:txs(B), Subs);
+            key   -> ok
+        end
+    end, Blocks),
+
+    {noreply, State#state{top_hash = TopHash}};
 notify_subscribers(block_created = Event, Block, State = #state{ subscribed = Subs }) ->
     notify_chain_subscribers(Event, Block, Subs),
     {noreply, State};
