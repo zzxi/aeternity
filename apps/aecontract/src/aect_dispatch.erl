@@ -87,14 +87,14 @@ call_AEVM_01_Solidity_01(#{ contract   := ContractPubKey
 
 set_env(ContractPubKey, Height, Trees, API, VmVersion) ->
     ChainState = aec_vm_chain:new_state(Trees, Height, ContractPubKey),
-    MiningBeneficiarry = aec_conductor:get_beneficiary(),
-    #{currentCoinbase   => MiningBeneficiarry,
-      %% TODO: get the right difficulty (Tracked as #159522571)
+    %% {ok, MinerPubkey} = aec_keys:pubkey(),
+    #{currentCoinbase   => <<>>, %% MinerPubkey,
+      %% TODO: get the right difficulty
       currentDifficulty => 0,
-      %% TODO: implement gas limit in governance and blocks. (Tracked as #159427123)
+      %% TODO: implement gas limit in governance and blocks.
       currentGasLimit   => 100000000000,
       currentNumber     => Height,
-      %% TODO: should be set before starting block candidate. (Tracked as #159522630)
+      %% TODO: should be set before starting block candidate.
       currentTimestamp  => aeu_time:now_in_msecs(),
       chainState        => ChainState,
       chainAPI          => API,
@@ -127,6 +127,7 @@ call_common(#{ caller     := CallerPubKey
     }),
     try aevm_eeevm_state:init(Spec#{exec => Exec}, #{trace => false}) of
         InitState ->
+            %% TODO: Nicer error handling - do more in check.
             %% Update gas_used depending on exit type.
             try aevm_eeevm:eval(InitState) of
                 {ok, #{gas := GasLeft, out := Out, chain_state := ChainState}} ->
@@ -142,7 +143,7 @@ call_common(#{ caller     := CallerPubKey
                 {error, Error, _} ->
                     %% Execution resulting in VM exception.
                     %% Gas used, but other state not affected.
-                    %% TODO: Use up the right amount of gas depending on error (#159522821)
+                    %% TODO: Use up the right amount of gas depending on error
                     %% TODO: Store error code in state tree
                     {create_call(Gas, error, Error, Call), Trees}
             catch T:E ->
