@@ -69,6 +69,7 @@ global_env() ->
     List    = fun(T) -> {app_t, Ann, {id, Ann, "list"}, [T]} end,
     Option  = fun(T) -> {app_t, Ann, {id, Ann, "option"}, [T]} end,
     Map     = fun(A, B) -> {app_t, Ann, {id, Ann, "map"}, [A, B]} end,
+    PMap    = fun(A, B) -> {app_t, Ann, {id, Ann, "pmap"}, [A, B]} end,
     Pair    = fun(A, B) -> {tuple_t, Ann, [A, B]} end,
     Fun     = fun(Ts, T) -> {type_sig, [], Ts, T} end,
     Fun1    = fun(S, T) -> Fun([S], T) end,
@@ -118,6 +119,10 @@ global_env() ->
      {["AENS", "claim"],    Fun([Address, String, Int, Signature], Unit)},
      {["AENS", "transfer"], Fun([Address, Address, Hash, Signature], Unit)},
      {["AENS", "revoke"],   Fun([Address, Hash, Signature], Unit)},
+     %% Primitive maps (TODO: should replace actual maps)
+     {["PMap", "empty"], Fun([], PMap(K, V))},
+     {["PMap", "get"],   Fun([K, PMap(K, V)], Option(V))},
+     {["PMap", "put"],   Fun([K, V, PMap(K, V)], PMap(K, V))},
      %% Maps
      {["Map", "from_list"], Fun1(List(Pair(K, V)), Map(K, V))},
      {["Map", "to_list"],   Fun1(Map(K, V), List(Pair(K, V)))},

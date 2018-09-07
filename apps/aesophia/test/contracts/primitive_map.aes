@@ -1,0 +1,7 @@
+
+contract PrimitiveMaps =
+
+  function test() =
+    let m  = PMap.empty() : pmap(string, string)
+    let m1 = PMap.put("foo", "bar", m)
+    PMap.get("foo", m1)

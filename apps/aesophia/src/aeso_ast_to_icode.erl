@@ -113,6 +113,7 @@ ast_type(T, Icode) ->
 -define(query_t(Q, R),  {app_t, _, {id, _, "oracle_query"}, [Q, R]}).
 -define(option_t(A),    {app_t, _, {id, _, "option"}, [A]}).
 -define(map_t(K, V),    {app_t, _, {id, _, "map"}, [K, V]}).
+-define(pmap_t(K, V),   {app_t, _, {id, _, "pmap"}, [K, V]}).
 
 ast_body(?qid_app(["Chain","spend"], [To, Amount], _, _), Icode) ->
     prim_call(?PRIM_CALL_SPEND, ast_body(Amount, Icode), [ast_body(To, Icode)], [word], {tuple, []});
@@ -296,6 +297,29 @@ ast_body(?qid_app(["String", "concat"], [String1, String2], _, _), Icode) ->
     #funcall{ function = #var_ref{ name = {builtin, string_concat} },
               args     = [ast_body(String1, Icode), ast_body(String2, Icode)] };
 
+%% Primitive maps (TODO: should replace actual maps later)
+ast_body({typed, Ann, ?qid_app(["PMap", "empty"], [], _, MapType), _}, Icode) ->
+    {KeyType, ValType} = check_monomorphic_map(Ann, MapType),
+    prim_call(?PRIM_CALL_MAP_EMPTY, #integer{value = 0},
+              [ast_type_value(KeyType, Icode),
+               ast_type_value(ValType, Icode)],
+              [typerep, typerep], ast_typerep(MapType));
+
+ast_body(?qid_app(["PMap", "put"], [Key, Val, {typed, Ann, Map, MapType}], _, _), Icode) ->
+    {KeyType, ValType} = check_monomorphic_map(Ann, MapType),
+    prim_call(?PRIM_CALL_MAP_PUT, #integer{value = 0},
+              [ast_body(Map, Icode), ast_body(Key, Icode), ast_body(Val, Icode)],
+              %% TODO: pass value as pointer to make more efficient?
+              [ast_typerep(MapType, Icode), ast_typerep(KeyType, Icode), ast_typerep(ValType, Icode)], ast_typerep(MapType, Icode));
+
+ast_body(?qid_app(["PMap", "get"], [Key, {typed, Ann, Map, MapType}], _, _), Icode) ->
+    {KeyType, ValType} = check_monomorphic_map(Ann, MapType),
+    prim_call(?PRIM_CALL_MAP_GET, #integer{value = 0},
+              [ast_body(Map, Icode), ast_body(Key, Icode)],
+              [ast_typerep(MapType, Icode), ast_typerep(KeyType, Icode)],
+              %% TODO: return union(word, ValType) to allow shared pointers in maps
+              aeso_icode:option_typerep(ast_typerep(ValType, Icode)));
+
 %% Other terms
 ast_body({id, _, Name}, _Icode) ->
     %% TODO Look up id in env
@@ -455,6 +479,12 @@ ast_binop(Op, Ann, {typed, _, A, Type}, B, Icode)
     end;
 ast_binop(Op, _, A, B, Icode) ->
     #binop{op = Op, left = ast_body(A, Icode), right = ast_body(B, Icode)}.
+
+check_monomorphic_map(Ann, Type = ?pmap_t(KeyType, ValType)) ->
+    case is_monomorphic(KeyType) of
+        true  -> {KeyType, ValType};
+        false -> error({cant_compile_map_with_polymorphic_keys, Ann, Type})
+    end.
 
 is_monomorphic({tvar, _, _}) -> false;
 is_monomorphic([H|T]) ->

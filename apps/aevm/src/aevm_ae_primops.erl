@@ -38,21 +38,32 @@
       OogResource :: any(),
       OogCost :: pos_integer().
 call(Value, Data, StateIn) ->
-    ChainIn = #chain{api = aevm_eeevm_state:chain_api(StateIn),
-                     state = aevm_eeevm_state:chain_state(StateIn)},
-    case call_(Value, Data, ChainIn) of
-        {ok, ReturnValue, GasSpent, ChainStateOut} ->
-            StateOut = aevm_eeevm_state:set_chain_state(ChainStateOut, StateIn),
-            {ok, ReturnValue, GasSpent, StateOut};
+    case call_primop(get_primop(Data), Value, Data, StateIn) of
+        {ok, _, _, _} = Ok -> Ok;
         {error, _} = Err ->
             ?TEST_LOG("Primop call error ~p~n~p:~p(~p, ~p, State)",
                       [Err, ?MODULE, ?FUNCTION_NAME, Value, Data]),
             Err
     end.
 
-call_(Value, Data, State) ->
+call_primop(PrimOp, Value, Data, StateIn) ->
+    case PrimOp of
+        PrimOp when ?PRIM_CALL_IN_MAP_RANGE(PrimOp) ->  %% Map primops need the full VM state
+            map_call(PrimOp, Value, Data, StateIn);
+        _ ->
+            ChainIn = #chain{api   = aevm_eeevm_state:chain_api(StateIn),
+                             state = aevm_eeevm_state:chain_state(StateIn)},
+            case call_(PrimOp, Value, Data, ChainIn) of
+                {ok, ReturnValue, GasSpent, ChainStateOut} ->
+                    StateOut = aevm_eeevm_state:set_chain_state(ChainStateOut, StateIn),
+                    {ok, ReturnValue, GasSpent, StateOut};
+                {error, _} = Err -> Err
+            end
+    end.
+
+call_(PrimOp, Value, Data, State) ->
     try
-        case get_primop(Data) of
+        case PrimOp of
             ?PRIM_CALL_SPEND ->
                 spend_call(Value, Data, State);
             PrimOp when ?PRIM_CALL_IN_ORACLE_RANGE(PrimOp) ->
@@ -245,6 +256,47 @@ aens_call_revoke(Data, State) ->
     [Addr, Hash, Sign] = get_args([word, word, word], Data),
     Callback = fun(API, ChainState) -> API:aens_revoke(<<Addr:256>>, <<Hash:256>>, <<Sign:256>>, ChainState) end,
     cast_chain(Callback, State).
+
+%% ------------------------------------------------------------------
+%% Map operations.
+%% ------------------------------------------------------------------
+
+map_call(?PRIM_CALL_MAP_EMPTY, _Value, Data, State) ->
+    map_call_empty(Data, State);
+map_call(?PRIM_CALL_MAP_GET, _Value, Data, State) ->
+    map_call_get(Data, State);
+map_call(?PRIM_CALL_MAP_PUT, _Value, Data, State) ->
+    map_call_put(Data, State);
+map_call(_, _, _, _) ->
+    {error, out_of_gas}.
+
+map_call_empty(Data, State) ->
+    [KeyType, ValType] = get_args([typerep, typerep], Data),
+    {MapId, State1} = aevm_eeevm_state:new_map(KeyType, ValType, #{}, State),
+    {ok, {ok, <<MapId:32/unit:8>>}, 0, State1}.
+
+map_call_get(Data, State) ->
+    [MapId]   = get_args([word], Data),
+    {ok, Map} = aevm_eeevm_state:get_map(MapId, State),
+    KeyType   = aevm_eeevm_state:map_keytype(Map),
+    Contents  = aevm_eeevm_state:map_contents(Map),
+    [_, Key]  = get_args([word, KeyType], Data),
+    Res = case Contents of
+            #{ Key := Val } -> {some, Val};
+            _               -> none
+          end,
+    {ok, {ok, aeso_data:to_binary(Res)}, 0, State}.
+
+map_call_put(Data, State) ->
+    [MapId]       = get_args([word], Data),
+    {ok, Map}     = aevm_eeevm_state:get_map(MapId, State),
+    KeyType       = aevm_eeevm_state:map_keytype(Map),
+    ValType       = aevm_eeevm_state:map_keytype(Map),
+    Contents      = aevm_eeevm_state:map_contents(Map),
+    [_, Key, Val] = get_args([word, KeyType, ValType], Data),
+    {NewMapId, State1} = aevm_eeevm_state:new_map(KeyType, ValType, Contents#{ Key => Val }, State),
+    {ok, {ok, <<NewMapId:256>>}, 0, State1}.
+
 
 %% ------------------------------------------------------------------
 %% Internal functions

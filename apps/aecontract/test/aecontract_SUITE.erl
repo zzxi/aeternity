@@ -59,6 +59,7 @@
         , sophia_oracles_qfee__outer_error_after_primop__remote/1
         , sophia_maps/1
         , sophia_map_benchmark/1
+        , sophia_pmaps/1
         , sophia_variant_types/1
         , sophia_chain/1
         , sophia_savecoinbase/1
@@ -2205,6 +2206,14 @@ sophia_map_benchmark(Cfg) ->
     %%                                 -32%     delta cost
     %%         x1.9         x2.6       x3.0     total improvement
 
+    ok.
+
+sophia_pmaps(_Cfg) ->
+    state(aect_test_utils:new_state()),
+    Acc = ?call(new_account, 1000000000),
+    Ct  = ?call(create_contract, Acc, primitive_map, {}),
+    {{some, <<"bar">>}, Gas} = ?call(call_contract, Acc, Ct, test, {option, string}, [], #{return_gas_used => true}),
+    io:format("Gas used = ~p\n", [Gas]),
     ok.
 
 sophia_variant_types(_Cfg) ->

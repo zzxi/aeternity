@@ -35,12 +35,17 @@
         , gaslimit/1
         , gasprice/1
         , get_contract_call_input/3
+        , get_map/2
         , init/2
         , jumpdests/1
         , logs/1
         , origin/1
         , out/1
+        , map_keytype/1
+        , map_valtype/1
+        , map_contents/1
         , mem/1
+        , new_map/4
         , no_recursion/1
         , number/1
         , return_contract_call_result/4
@@ -112,6 +117,8 @@ init(#{ env  := Env
          , trace_fun => init_trace_fun(Opts)
 
          , vm_version => maps:get(vm_version, Env)
+
+         , maps => #{}
 
          , chain_state => ChainState
          , chain_api   => ChainAPI
@@ -366,6 +373,8 @@ do_trace(State)    -> maps:get(do_trace, State).
 trace(State)       -> maps:get(trace, State).
 trace_fun(State)   -> maps:get(trace_fun, State).
 
+maps(State)        -> maps:get(maps, State).
+
 chain_state(State) -> maps:get(chain_state, State).
 chain_api(State)   -> maps:get(chain_api, State).
 
@@ -384,7 +393,28 @@ set_gas(Value, State)     -> maps:put(gas, Value, State).
 set_storage(Value, State) -> maps:put(storage, Value, State).
 set_jumpdests(Value, State)    -> maps:put(jumpdests, Value, State).
 set_selfdestruct(Value, State) -> maps:put(selfdestruct, Value, State).
+set_maps(Maps, State)         -> maps:put(maps, Maps, State).
 set_chain_state(Value, State) -> maps:put(chain_state, Value, State).
+
+%% Primitive maps
+
+-record(pmap, {key_t, val_t, data}).
+
+map_keytype(#pmap{key_t = KeyT}) -> KeyT.
+map_valtype(#pmap{val_t = ValT}) -> ValT.
+map_contents(#pmap{data = Data}) -> Data.
+
+get_map(MapId, State) ->
+    case maps(State) of
+        #{ MapId := Map } -> {ok, Map};
+        _                 -> {error, not_found}
+    end.
+
+new_map(KeyType, ValType, Data, State) when is_map(Data) ->
+    Maps  = maps(State),
+    MapId = maps:size(Maps) + 1,
+    Map   = #pmap{key_t = KeyType, val_t = ValType, data = Data},
+    {MapId, set_maps(Maps#{ MapId => Map }, State)}.
 
 add_callcreates(#{ data := _
                  , destination := _
