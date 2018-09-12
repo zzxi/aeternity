@@ -8,7 +8,9 @@
 
 -behaviour(aevm_chain_api).
 
--export([new_state/3, get_trees/1]).
+-export([new_state/3, get_trees/1,
+         new_offchain_state/4
+         ]).
 
 %% aevm_chain_api callbacks
 -export([ get_height/1,
@@ -35,9 +37,10 @@
 
 
 
--record(state, { trees   :: aec_trees:trees()
-               , height  :: aec_blocks:height()
-               , account :: aec_keys:pubkey()            %% the contract account
+-record(state, { trees                         :: aec_trees:trees()
+               , height                        :: aec_blocks:height()
+               , account                       :: aec_keys:pubkey() %% the contract account
+               , on_chain_trees = not_channel  :: aec_trees:trees() | not_channel
                }).
 
 -type chain_state() :: #state{}.
@@ -67,6 +70,16 @@ new_state(Trees, Height, ContractAccount) ->
             account = ContractAccount
           }.
 
+%% @doc Create an off chain state.
+-spec new_offchain_state(aec_trees:trees(), aec_trees:trees(),
+                         aec_blocks:height(), aec_keys:pubkey()) -> chain_state().
+new_offchain_state(OffChainTrees, OnChainTrees, Height, ContractAccount) ->
+    #state{ trees          = OffChainTrees,
+            on_chain_trees = OnChainTrees,
+            height         = Height,
+            account        = ContractAccount
+          }.
+
 %% @doc Get the state trees from a state.
 -spec get_trees(chain_state()) -> aec_trees:trees().
 get_trees(#state{ trees = Trees}) ->
@@ -78,8 +91,20 @@ get_height(#state{ height = Height }) ->
 
 %% @doc Get the balance of the contract account.
 -spec get_balance(aec_keys:pubkey(), chain_state()) -> non_neg_integer().
-get_balance(PubKey, #state{ trees = Trees }) ->
-    do_get_balance(PubKey, Trees).
+get_balance(PubKey, #state{} = State) ->
+    Res =
+        case is_channel_call(State) of
+            false -> do_get_balance(PubKey, State#state.trees);
+            true ->
+                case do_get_balance(PubKey, State#state.trees) of
+                    none -> do_get_balance(PubKey, State#state.on_chain_trees);
+                    ChannelBalance -> ChannelBalance
+                end
+        end,
+    case Res of
+        none -> 0;
+        B -> B
+    end.
 
 %% @doc Get the contract state store of the contract account.
 -spec get_store(chain_state()) -> aevm_chain_api:store().
@@ -204,23 +229,32 @@ oracle_extend(Oracle,_Sign, TTL, State) ->
                            }),
     apply_transaction(Tx, State).
 
-oracle_get_answer(OracleId, QueryId, #state{ trees = Trees } =_State) ->
-    case aeo_state_tree:lookup_query(OracleId, QueryId,
-                                     aec_trees:oracles(Trees)) of
-        {value, Query} ->
-            case aeo_query:response(Query) of
-                undefined -> {ok, none};
-                Answer ->
-                    {value, Oracle} = aeo_state_tree:lookup_oracle(OracleId,
-                                                                   aec_trees:oracles(Trees)),
-                    ResponseFormat = aeo_oracles:response_format(Oracle),
-                    {ok, Type} = aeso_data:from_binary(typerep,  ResponseFormat),
-                    {ok, Result} = aeso_data:from_binary(Type, Answer),
-                    {ok, {some, Result}}
-            end;
-        none ->
-            {ok, none}
-    end.
+oracle_get_answer(OracleId, QueryId, #state{} = State) ->
+    Get =
+        fun(Trees) ->
+            case aeo_state_tree:lookup_query(OracleId, QueryId,
+                                            aec_trees:oracles(Trees)) of
+                {value, Query} ->
+                    case aeo_query:response(Query) of
+                        undefined -> {ok, none};
+                        Answer ->
+                            {value, Oracle} = aeo_state_tree:lookup_oracle(OracleId,
+                                                                          aec_trees:oracles(Trees)),
+                            ResponseFormat = aeo_oracles:response_format(Oracle),
+                            {ok, Type} = aeso_data:from_binary(typerep,  ResponseFormat),
+                            {ok, Result} = aeso_data:from_binary(Type, Answer),
+                            {ok, {some, Result}}
+                    end;
+                none ->
+                    {ok, none}
+            end
+        end,
+    Trees =
+        case is_channel_call(State) of
+            false -> State#state.trees;
+            true -> State#state.on_chain_trees
+        end,
+    Get(Trees).
 
 oracle_get_question(OracleId, QueryId, #state{trees = Trees} = _State) ->
     OraclesTree = aec_trees:oracles(Trees),
@@ -403,7 +437,7 @@ call_contract(Target, Gas, Value, CallData, CallStack,
 do_get_balance(PubKey, Trees) ->
     AccountsTree  = aec_trees:accounts(Trees),
     case aec_accounts_trees:lookup(PubKey, AccountsTree) of
-        none             -> 0;
+        none             -> none;
         {value, Account} -> aec_accounts:balance(Account)
     end.
 
@@ -441,3 +475,5 @@ next_nonce(Addr, #state{ trees = Trees }) ->
     {value, Account} = aec_accounts_trees:lookup(Addr, AT),
     aec_accounts:nonce(Account) + 1.
 
+is_channel_call(#state{on_chain_trees = OnChainTrees}) ->
+    OnChainTrees =/= not_channel.

@@ -66,30 +66,28 @@ run(_, #{ call := Call} = _CallDef) ->
     %% Wrong VM/ABI version just return an unchanged call.
     Call.
 
-call_AEVM_01_Sophia_01(#{ contract    := ContractPubKey
-                        , height      := Height
-                        , trees       := Trees
+call_AEVM_01_Sophia_01(#{ height      := Height
                         , beneficiary := <<Beneficiary:?BENEFICIARY_PUB_BYTES/unit:8>>
                         } = CallDef) ->
-    Env = set_env(ContractPubKey, Height, Trees, Beneficiary, aec_vm_chain, ?AEVM_01_Sophia_01),
+    OffChain = maps:get(off_chain, CallDef, false),
+    ChainState = chain_state(CallDef),
+    Env = set_env(ChainState, Height, Beneficiary, aec_vm_chain, ?AEVM_01_Sophia_01),
     Spec = #{ env => Env,
               exec => #{},
               pre => #{}},
     call_common(CallDef, Spec).
 
-call_AEVM_01_Solidity_01(#{ contract    := ContractPubKey
-                          , height      := Height
-                          , trees       := Trees
+call_AEVM_01_Solidity_01(#{ height      := Height
                           , beneficiary := <<Beneficiary:?BENEFICIARY_PUB_BYTES/unit:8>>
                           } = CallDef) ->
-    Env = set_env(ContractPubKey, Height, Trees, Beneficiary, aec_vm_chain, ?AEVM_01_Solidity_01),
+    ChainState = chain_state(CallDef),
+    Env = set_env(ChainState, Height, Beneficiary, aec_vm_chain, ?AEVM_01_Solidity_01),
     Spec = #{ env => Env,
               exec => #{},
               pre => #{}},
     call_common(CallDef, Spec).
 
-set_env(ContractPubKey, Height, Trees, Beneficiary, API, VmVersion) ->
-    ChainState = aec_vm_chain:new_state(Trees, Height, ContractPubKey),
+set_env(ChainState, Height, Beneficiary, API, VmVersion) ->
     #{currentCoinbase   => Beneficiary,
       %% TODO: get the right difficulty (Tracked as #159522571)
       currentDifficulty => 0,
@@ -101,6 +99,18 @@ set_env(ContractPubKey, Height, Trees, Beneficiary, API, VmVersion) ->
       chainState        => ChainState,
       chainAPI          => API,
       vm_version        => VmVersion}.
+
+chain_state(#{ contract    := ContractPubKey
+             , height      := Height
+             , trees       := Trees} = CallDef) ->
+    case maps:get(off_chain, CallDef, false) of
+        true ->
+            OnChainTrees = maps:get(on_chain_trees, CallDef),
+            aec_vm_chain:new_offchain_state(Trees, OnChainTrees, Height,
+                                            ContractPubKey);
+        false ->
+            aec_vm_chain:new_state(Trees, Height, ContractPubKey)
+    end.
 
 call_common(#{ caller     := CallerPubKey
              , contract   := ContractPubKey

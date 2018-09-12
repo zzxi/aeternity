@@ -4,7 +4,7 @@
 
 -export([new/6,
          run_new/5,
-         run/10,
+         run/11,
          get_call/4,
          insert_failed_call/6
         ]).
@@ -74,10 +74,10 @@ run_new(ContractPubKey, Call, CallData, Round, Trees0) ->
 
 -spec run(aect_contracts:pubkey(), aect_contracts:vm_version(), aect_call:call(),
           binary(), [non_neg_integer()], non_neg_integer(), aec_trees:trees(),
-          non_neg_integer(), non_neg_integer(), non_neg_integer())
-    -> aec_trees:trees().
+          non_neg_integer(), non_neg_integer(), non_neg_integer(),
+          aec_trees:trees()) -> aec_trees:trees().
 run(ContractPubKey, VmVersion, Call, CallData, CallStack, Round, Trees0,
-    Amount, GasPrice, Gas) ->
+    Amount, GasPrice, Gas, OnChainTrees) ->
     ContractsTree  = aec_trees:contracts(Trees0),
     Contract = aect_state_tree:get_contract(ContractPubKey, ContractsTree),
     OwnerPubKey = aect_contracts:owner_pubkey(Contract),
@@ -96,7 +96,9 @@ run(ContractPubKey, VmVersion, Call, CallData, CallStack, Round, Trees0,
                , code       => Code
                , call       => Call
                , height     => Round
+               , off_chain  => true
                , trees      => Trees0
+               , on_chain_trees => OnChainTrees
                  %% We do not want the execution off chain and
                  %% on chain to be different so the coinbase
                  %% instruction will allways return 0.

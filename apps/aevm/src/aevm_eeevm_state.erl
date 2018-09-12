@@ -107,6 +107,11 @@ init(#{ env  := Env
 
     ChainState = maps:get(chainState, Env),
     ChainAPI =  maps:get(chainAPI, Env),
+    {IsOffChain, OnChainTrees} =
+        case maps:get(off_chain, Env, false) of
+            false -> {false, not_offchain_call};
+            true -> {true, maps:get(on_chain_trees, Env)}
+        end,
 
     State =
         #{ address     => Address
@@ -142,6 +147,8 @@ init(#{ env  := Env
          , environment =>
                #{ spec => Spec
                 , options => Opts }
+         , off_chain  => IsOffChain
+         , on_chain_trees  => OnChainTrees
 
          },
 
