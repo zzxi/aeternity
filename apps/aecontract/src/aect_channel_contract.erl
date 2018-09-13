@@ -97,6 +97,7 @@ run(ContractPubKey, VmVersion, Call, CallData, CallStack, Round, Trees0,
                , call       => Call
                , height     => Round
                , off_chain  => true
+               , round      => Round
                , trees      => Trees0
                , on_chain_trees => OnChainTrees
                  %% We do not want the execution off chain and

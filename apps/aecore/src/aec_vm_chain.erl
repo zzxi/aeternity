@@ -9,7 +9,10 @@
 -behaviour(aevm_chain_api).
 
 -export([new_state/3, get_trees/1,
-         new_offchain_state/4
+         new_offchain_state/3,
+         set_state_offchain/1,
+         set_state_onchain/1,
+         push_state_context/2
          ]).
 
 %% aevm_chain_api callbacks
@@ -35,17 +38,19 @@
           spend/3
         ]).
 
+-define(NO_INNER_STATE, nej).
 
-
--record(state, { trees                         :: aec_trees:trees()
-               , height                        :: aec_blocks:height()
-               , account                       :: aec_keys:pubkey() %% the contract account
-               , on_chain_trees = not_channel  :: aec_trees:trees() | not_channel
+-record(state, { trees              :: aec_trees:trees()
+               , height             :: aec_blocks:height()
+               , account            :: aec_keys:pubkey() %% the contract account
+               , is_onchain = true  :: boolean()
+               , inner_state        :: chain_state() | ?NO_INNER_STATE
                }).
 
 -type chain_state() :: #state{}.
 
 -define(PUB_SIZE, 32).
+
 
 -ifdef(COMMON_TEST).
 -define(TEST_LOG(Format, Data),
@@ -62,23 +67,39 @@
 
 %% -- API --------------------------------------------------------------------
 
-%% @doc Create a chain state.
+%% @doc Create an on-chain state.
 -spec new_state(aec_trees:trees(), aec_blocks:height(), aec_keys:pubkey()) -> chain_state().
 new_state(Trees, Height, ContractAccount) ->
-    #state{ trees   = Trees,
-            height  = Height,
-            account = ContractAccount
+    #state{ trees       = Trees,
+            height      = Height,
+            account     = ContractAccount,
+            inner_state = ?NO_INNER_STATE
           }.
 
-%% @doc Create an off chain state.
--spec new_offchain_state(aec_trees:trees(), aec_trees:trees(),
-                         aec_blocks:height(), aec_keys:pubkey()) -> chain_state().
-new_offchain_state(OffChainTrees, OnChainTrees, Height, ContractAccount) ->
-    #state{ trees          = OffChainTrees,
-            on_chain_trees = OnChainTrees,
-            height         = Height,
-            account        = ContractAccount
-          }.
+%% @doc Create an off-chain state.
+-spec new_offchain_state(aec_trees:trees(), aesc_channels:seq_number(),
+                         aec_keys:pubkey()) -> chain_state().
+new_offchain_state(OffChainTrees, Round, ContractAccount) ->
+    State = new_state(OffChainTrees, Round, ContractAccount),
+    set_state_offchain(State).
+
+
+%% @doc Turn an on-chain state into an off-chain one
+-spec set_state_offchain(chain_state()) -> chain_state().
+set_state_offchain(#state{is_onchain = true} = State) ->
+    State#state{is_onchain = false}.
+
+%% @doc Turn an off-chain state into an on-chain one
+-spec set_state_onchain(chain_state()) -> chain_state().
+set_state_onchain(#state{is_onchain = false} = State) ->
+    State#state{is_onchain  = true,
+                inner_state = ?NO_INNER_STATE}.
+
+%% @doc Push another state context on top of currently existing ones
+-spec push_state_context(chain_state(), chain_state()) -> chain_state().
+push_state_context(#state{is_onchain = false} = State, InnerState) ->
+    State#state{is_onchain = true,
+                inner_state = InnerState}.
 
 %% @doc Get the state trees from a state.
 -spec get_trees(chain_state()) -> aec_trees:trees().
@@ -92,15 +113,8 @@ get_height(#state{ height = Height }) ->
 %% @doc Get the balance of the contract account.
 -spec get_balance(aec_keys:pubkey(), chain_state()) -> non_neg_integer().
 get_balance(PubKey, #state{} = State) ->
-    Res =
-        case is_channel_call(State) of
-            false -> do_get_balance(PubKey, State#state.trees);
-            true ->
-                case do_get_balance(PubKey, State#state.trees) of
-                    none -> do_get_balance(PubKey, State#state.on_chain_trees);
-                    ChannelBalance -> ChannelBalance
-                end
-        end,
+    Get = fun(Trees) -> do_get_balance(PubKey, Trees) end,
+    Res = get_from_state_or_inner(Get, none, State),
     case Res of
         none -> 0;
         B -> B
@@ -108,9 +122,13 @@ get_balance(PubKey, #state{} = State) ->
 
 %% @doc Get the contract state store of the contract account.
 -spec get_store(chain_state()) -> aevm_chain_api:store().
-get_store(#state{ account = PubKey, trees = Trees }) ->
-    Store = do_get_store(PubKey, Trees),
-    Store.
+get_store(#state{ account = PubKey} = State) ->
+    Get = fun(Trees) -> do_get_store(PubKey, Trees) end,
+    Res = get_from_state_or_inner(Get, none, State),
+    case Res of
+        none -> #{};
+        S -> S
+    end.
 
 %% @doc Set the contract state store of the contract account.
 -spec set_store(aevm_chain_api:store(), chain_state()) -> chain_state().
@@ -229,33 +247,30 @@ oracle_extend(Oracle,_Sign, TTL, State) ->
                            }),
     apply_transaction(Tx, State).
 
-oracle_get_answer(OracleId, QueryId, #state{} = State) ->
-    Get =
-        fun(Trees) ->
-            case aeo_state_tree:lookup_query(OracleId, QueryId,
-                                            aec_trees:oracles(Trees)) of
-                {value, Query} ->
-                    case aeo_query:response(Query) of
-                        undefined -> {ok, none};
-                        Answer ->
-                            {value, Oracle} = aeo_state_tree:lookup_oracle(OracleId,
-                                                                          aec_trees:oracles(Trees)),
-                            ResponseFormat = aeo_oracles:response_format(Oracle),
-                            {ok, Type} = aeso_data:from_binary(typerep,  ResponseFormat),
-                            {ok, Result} = aeso_data:from_binary(Type, Answer),
-                            {ok, {some, Result}}
-                    end;
-                none ->
-                    {ok, none}
-            end
-        end,
-    Trees =
-        case is_channel_call(State) of
-            false -> State#state.trees;
-            true -> State#state.on_chain_trees
-        end,
-    Get(Trees).
+oracle_get_answer(OracleId, QueryId, #state{is_onchain  = false,
+                                            inner_state = InnerState}) ->
+    oracle_get_answer(OracleId, QueryId, InnerState);
+oracle_get_answer(OracleId, QueryId, #state{is_onchain = true, trees = Trees}) ->
+    case aeo_state_tree:lookup_query(OracleId, QueryId,
+                                    aec_trees:oracles(Trees)) of
+        {value, Query} ->
+            case aeo_query:response(Query) of
+                undefined -> {ok, none};
+                Answer ->
+                    {value, Oracle} = aeo_state_tree:lookup_oracle(OracleId,
+                                                                  aec_trees:oracles(Trees)),
+                    ResponseFormat = aeo_oracles:response_format(Oracle),
+                    {ok, Type} = aeso_data:from_binary(typerep,  ResponseFormat),
+                    {ok, Result} = aeso_data:from_binary(Type, Answer),
+                    {ok, {some, Result}}
+            end;
+        none ->
+            {ok, none}
+    end.
 
+oracle_get_question(OracleId, QueryId, #state{is_onchain  = false,
+                                              inner_state = InnerState}) ->
+    oracle_get_question(OracleId, QueryId, InnerState);
 oracle_get_question(OracleId, QueryId, #state{trees = Trees} = _State) ->
     OraclesTree = aec_trees:oracles(Trees),
     case aeo_state_tree:lookup_query(OracleId, QueryId, OraclesTree) of
@@ -266,6 +281,9 @@ oracle_get_question(OracleId, QueryId, #state{trees = Trees} = _State) ->
             {ok, none}
     end.
 
+oracle_query_fee(Oracle, #state{is_onchain  = false,
+                                inner_state = InnerState}) ->
+    oracle_query_fee(Oracle, InnerState);
 oracle_query_fee(Oracle, #state{trees = Trees} =_State) ->
     case aeo_state_tree:lookup_oracle(Oracle, aec_trees:oracles(Trees)) of
         {value, O} ->
@@ -275,6 +293,9 @@ oracle_query_fee(Oracle, #state{trees = Trees} =_State) ->
             {ok, none}
     end.
 
+oracle_query_format(Oracle, #state{is_onchain  = false,
+                                   inner_state = InnerState}) ->
+    oracle_query_format(Oracle, InnerState);
 oracle_query_format(Oracle, #state{ trees   = Trees} =_State) ->
     case aeo_state_tree:lookup_oracle(Oracle, aec_trees:oracles(Trees)) of
         {value, O} ->
@@ -292,6 +313,9 @@ oracle_query_format(Oracle, #state{ trees   = Trees} =_State) ->
 
 
 
+oracle_response_format(Oracle, #state{is_onchain  = false,
+                                      inner_state = InnerState}) ->
+    oracle_response_format(Oracle, InnerState);
 oracle_response_format(Oracle, #state{ trees   = Trees} =_State) ->
     case aeo_state_tree:lookup_oracle(Oracle, aec_trees:oracles(Trees)) of
         {value, O} ->
@@ -313,6 +337,9 @@ get_query_type(OracleId, OraclesTree) ->
 
 %%    AENS
 
+aens_resolve(Name, Key, Type,  #state{is_onchain  = false,
+                                      inner_state = InnerState}) ->
+    aens_resolve(Name, Key, Type, InnerState);
 aens_resolve(Name, Key, Type, #state{ trees = Trees } = _State) ->
     case aens:resolve(Key, Name, aec_trees:ns(Trees)) of
         {ok, Id}  ->
@@ -445,7 +472,7 @@ do_get_store(PubKey, Trees) ->
     ContractsTree = aec_trees:contracts(Trees),
     case aect_state_tree:lookup_contract(PubKey, ContractsTree) of
         {value, Contract} -> aect_contracts:state(Contract);
-        none              -> #{}
+        none              -> none
     end.
 
 do_set_store(Store, PubKey, Trees) ->
@@ -475,5 +502,22 @@ next_nonce(Addr, #state{ trees = Trees }) ->
     {value, Account} = aec_accounts_trees:lookup(Addr, AT),
     aec_accounts:nonce(Account) + 1.
 
-is_channel_call(#state{on_chain_trees = OnChainTrees}) ->
-    OnChainTrees =/= not_channel.
+is_channel_call(#state{is_onchain = false, inner_state = InnerState}) when
+    InnerState =:= ?NO_INNER_STATE ->
+    throw(offchain_missing_onchain);
+is_channel_call(#state{is_onchain = false}) ->
+    true;
+is_channel_call(#state{is_onchain = true}) ->
+    false.
+
+get_from_state_or_inner(Fun, NotFoundValue, State) ->
+    case is_channel_call(State) of
+        false -> Fun(State#state.trees);
+        true ->
+            case Fun(State#state.trees) of
+                NotFoundValue ->
+                    get_from_state_or_inner(Fun, NotFoundValue, State#state.inner_state);
+                ChannelBalance -> ChannelBalance
+            end
+    end.
+

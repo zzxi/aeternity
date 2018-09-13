@@ -69,7 +69,6 @@ run(_, #{ call := Call} = _CallDef) ->
 call_AEVM_01_Sophia_01(#{ height      := Height
                         , beneficiary := <<Beneficiary:?BENEFICIARY_PUB_BYTES/unit:8>>
                         } = CallDef) ->
-    OffChain = maps:get(off_chain, CallDef, false),
     ChainState = chain_state(CallDef),
     Env = set_env(ChainState, Height, Beneficiary, aec_vm_chain, ?AEVM_01_Sophia_01),
     Spec = #{ env => Env,
@@ -106,8 +105,10 @@ chain_state(#{ contract    := ContractPubKey
     case maps:get(off_chain, CallDef, false) of
         true ->
             OnChainTrees = maps:get(on_chain_trees, CallDef),
-            aec_vm_chain:new_offchain_state(Trees, OnChainTrees, Height,
-                                            ContractPubKey);
+            Round = maps:get(round, CallDef),
+            OnChainState = aec_vm_chain:new_state(OnChainTrees, Height, ContractPubKey),
+            OffChainState = aec_vm_chain:new_offchain_state(Trees, Round, ContractPubKey),
+            aec_vm_chain:push_state_context(OffChainState, OnChainState);
         false ->
             aec_vm_chain:new_state(Trees, Height, ContractPubKey)
     end.
