@@ -49,12 +49,12 @@ call_(Value, Data, State) ->
                 aens_call(PrimOp, Value, Data, State)
         end
     catch _T:_Err ->
-        ?TEST_LOG("Primop illegal call ~p:~p:~p~n~p:~p(~p, ~p, State)",
-                  [_T, _Err,
-                   erlang:get_stacktrace(), %% Absent from non-test bytecode.
-                   ?MODULE, ?FUNCTION_NAME, Value, Data]),
-	%% TODO: Better error for illegal call.
-        {error, out_of_gas}
+            ?TEST_LOG("Primop illegal call ~p:~p:~p~n~p:~p(~p, ~p, State)",
+                      [_T, _Err,
+                       erlang:get_stacktrace(), %% Absent from non-test bytecode.
+                       ?MODULE, ?FUNCTION_NAME, Value, Data]),
+            %% TODO: Better error for illegal call.
+            {error, out_of_gas}
     end.
 
 %% ------------------------------------------------------------------
@@ -65,7 +65,8 @@ spend_call(Value, Data, State) ->
     [Recipient] = get_args([word], Data),
     %% TODO: This assumes that we are spending to an account
     RecipientId = aec_id:create(account, <<Recipient:256>>),
-    Callback = fun(API, ChainState) -> API:spend(RecipientId, Value, ChainState) end,
+    Callback = fun(API, ChainState) ->
+                       API:spend(RecipientId, Value, ChainState) end,
     call_chain(Callback, State).
 
 %% ------------------------------------------------------------------
@@ -117,8 +118,12 @@ call_chain(Callback, State) ->
         {error, _} = Err -> Err
     end.
 
+%% Sophia representation of aeo_oracles:ttl().
+oracle_ttl_t() ->
+    {variant_t, [{delta, [word]}, {block, [word]}]}.
+
 oracle_call_register(_Value, Data, State) ->
-    ArgumentTypes = [word, word, word, word, typerep, typerep],
+    ArgumentTypes = [word, word, word, oracle_ttl_t(), typerep, typerep],
     [Acct, Sign, QFee, TTL, QType, RType] = get_args(ArgumentTypes, Data),
     Callback =
         fun(API, ChainState) ->
@@ -133,7 +138,7 @@ oracle_call_query(Value, Data, State) ->
     OracleKey = <<Oracle:256>>,
     case call_chain1(fun(API, ChainState) -> API:oracle_query_format(OracleKey, ChainState) end, State) of
         {ok, QueryType} ->
-            ArgumentTypes = [word, QueryType, word, word],
+            ArgumentTypes = [word, QueryType, oracle_ttl_t(), oracle_ttl_t()],
             [_Oracle, Q, QTTL, RTTL] = get_args(ArgumentTypes, Data),
             Callback = fun(API, ChainState) ->
                 case API:oracle_query(OracleKey, Q, _QFee=Value, QTTL, RTTL, ChainState) of
@@ -160,7 +165,7 @@ oracle_call_respond(_Value, Data, State) ->
 
 
 oracle_call_extend(_Value, Data, State) ->
-    ArgumentTypes = [word, word, word],
+    ArgumentTypes = [word, word, oracle_ttl_t()],
     [Oracle, Sign, TTL] = get_args(ArgumentTypes, Data),
     Callback = fun(API, ChainState) -> API:oracle_extend(<<Oracle:256>>, Sign, TTL, ChainState) end,
     call_chain(Callback, State).

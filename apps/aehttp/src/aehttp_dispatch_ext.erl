@@ -475,10 +475,10 @@ handle_request('GetPeerPubkey', _Params, _Context) ->
     {200, [], #{pubkey => aec_base58c:encode(peer_pubkey, Pubkey)}};
 
 handle_request('GetStatus', _Params, _Context) ->
-    {ok, TopBlock} = aehttp_logic:get_top(),
+    {ok, TopKeyBlock} = aec_chain:top_key_block(),
     {ok, GenesisBlockHash} = aec_headers:hash_header(aec_block_genesis:genesis_header()),
     Solutions = 0, %% TODO
-    Difficulty = aec_blocks:difficulty(TopBlock),
+    Difficulty = aec_blocks:difficulty(TopKeyBlock),
     Syncing = true, %% TODO
     Listening = true, %% TODO
     Protocols = maps:fold(fun(Vsn, Height, Acc) ->
@@ -493,16 +493,16 @@ handle_request('GetStatus', _Params, _Context) ->
             undefined -> 0
         end,
     {200, [],
-     #{<<"genesis-key-block-hash">>     => aec_base58c:encode(key_block_hash, GenesisBlockHash),
+     #{<<"genesis_key_block_hash">>     => aec_base58c:encode(key_block_hash, GenesisBlockHash),
        <<"solutions">>                  => Solutions,
        <<"difficulty">>                 => Difficulty,
        <<"syncing">>                    => Syncing,
        <<"listening">>                  => Listening,
        <<"protocols">>                  => Protocols,
-       <<"node-version">>               => NodeVersion,
-       <<"node-revision">>              => NodeRevision,
-       <<"peer-count">>                 => PeerCount,
-       <<"pending-transactions-count">> => PendingTxsCount}};
+       <<"node_version">>               => NodeVersion,
+       <<"node_revision">>              => NodeRevision,
+       <<"peer_count">>                 => PeerCount,
+       <<"pending_transactions_count">> => PendingTxsCount}};
 
 handle_request('GetContractCallFromTx', Req, _Context) ->
     ParseFuns = [read_required_params([tx_hash]),

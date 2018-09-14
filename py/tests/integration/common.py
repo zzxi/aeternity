@@ -108,12 +108,12 @@ def make_no_mining_user_config(root_dir, file_name):
 ---
 chain:
     hard_forks:
-        "22": 0
+        "23": 0
 
 mining:
     autostart: false
     expected_mine_rate: 100
-    beneficiary: "ak$2QLChDdERfod9QajLkCTsJnYP3RNqZJmAFWQWQZWr99fSrC55h"
+    beneficiary: "ak_2QLChDdERfod9QajLkCTsJnYP3RNqZJmAFWQWQZWr99fSrC55h"
     beneficiary_reward_delay: 0
     cuckoo:
         miner:
@@ -128,7 +128,7 @@ def make_mining_user_config(root_dir, key_dir, beneficiary, file_name):
 ---
 chain:
     hard_forks:
-        "22": 0
+        "23": 0
 keys:
     dir: "{}"
 
@@ -234,7 +234,7 @@ def _balance_from_get_account(get_account_fun):
     return account
 
 def base58_decode(encoded):
-    if encoded[2] != '$':
+    if encoded[2] != '_':
         raise ValueError('Invalid hash')
     return base58.b58decode_check(encoded[3:])
 
@@ -242,7 +242,7 @@ def encode_signed_tx(encoded_tx, signatures):
     tag = bytearray([11])
     vsn = bytearray([1])
     payload = rlp.encode([tag, vsn, signatures, encoded_tx])
-    return "tx$" + base58.b58encode_check(payload)
+    return "tx_" + base58.b58encode_check(payload)
 
 def decode_unsigned_tx(encoded_tx):
     decoded = rlp.decode(encoded_tx)
@@ -274,15 +274,15 @@ def bytes_to_int(x):
 
 def encode_pubkey(pubkey):
     str = base58.b58encode_check(pubkey)
-    return "ak$" + str
+    return "ak_" + str
 
 def encode_name(name):
     str = base58.b58encode_check(name)
-    return "nm$" + str
+    return "nm_" + str
 
 def encode_tx_hash(txhash):
     str = base58.b58encode_check(txhash)
-    return "th$" + str
+    return "th_" + str
 
 def setup_beneficiary():
     import keys

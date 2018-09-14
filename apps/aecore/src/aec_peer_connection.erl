@@ -954,22 +954,33 @@ handle_new_micro_block(S, Msg) ->
                 Header = aec_blocks:to_header(MicroBlock),
                 {ok, HH} = aec_headers:hash_header(Header),
                 epoch_sync:debug("Got new block: ~s", [pp(HH)]),
+                %% in the full micro block case - conductor will do the necessary checks
                 aec_conductor:post_block(MicroBlock);
             true ->
                 {ok, #{ header := Header, tx_hashes := TxHashes }} =
                     deserialize_light_micro_block(maps:get(micro_block, Msg)),
-                case get_micro_block_txs(TxHashes) of
-                    {all, Txs} ->
-                        MicroBlock = aec_blocks:new_micro_from_header(Header, Txs),
+                %% Before assembling the block, check if it is known, and valid
+                case pre_assembly_check(Header) of
+                    known ->
+                        ok;
+                    E = {error, _} ->
                         {ok, HH} = aec_headers:hash_header(Header),
-                        epoch_sync:debug("Got new block: ~s", [pp(HH)]),
-                        aec_conductor:post_block(MicroBlock);
-                    {some, TxsAndTxHashes} ->
-                        epoch_sync:info("Missing txs: ~p",
-                                        [[ TH || TH <- TxsAndTxHashes, is_binary(TH) ]]),
-                        cast(self(), {expand_micro_block, #{ header => Header,
-                                                             tx_data => TxsAndTxHashes }}),
-                        ok
+                        epoch_sync:info("Got invalid light micro_block (~s): ~p", [pp(HH), E]),
+                        ok;
+                    ok ->
+                        case get_micro_block_txs(TxHashes) of
+                            {all, Txs} ->
+                                MicroBlock = aec_blocks:new_micro_from_header(Header, Txs),
+                                {ok, HH} = aec_headers:hash_header(Header),
+                                epoch_sync:debug("Got new block: ~s", [pp(HH)]),
+                                aec_conductor:post_block(MicroBlock);
+                            {some, TxsAndTxHashes} ->
+                                epoch_sync:info("Missing txs: ~p",
+                                                [[ TH || TH <- TxsAndTxHashes, is_binary(TH) ]]),
+                                cast(self(), {expand_micro_block, #{ header => Header,
+                                                                     tx_data => TxsAndTxHashes }}),
+                                ok
+                        end
                 end
         end
     catch _:_ ->
@@ -1091,30 +1102,41 @@ send_response(S, Type, Response) ->
     Msg = aec_peer_messages:serialize_response(Type, Response),
     send_msg(S, response, Msg).
 
-%% If the message is more than 65533 bytes it won't fit in a single Noise
-%% message and we need to fragment it.
+%% If the message is more than 0xFFFF - 2 - 16 bytes (2 bytes for the length at
+%% Noise protocol level and 16 bytes for the encryption MAC since we are using
+%% ChaChaPoly) it won't fit in a single Noise message and we need to fragment
+%% it.
 %%
 %% Fragments have the format <<?MSG_FRAGMENT:16, N:16, M:16,
-%% PayLoad:65529/binary>> (where the last fragment has a smaller Payload),
-%% saying that this is fragment N out of M fragments.
+%% PayLoad:65527/binary>> (where the last fragment has a smaller Payload, and
+%% where 16 bytes of the payload is the encryption MAC), saying that this is
+%% fragment N out of M fragments.
 %%
-%% For testing purpose - set the max packet size to 16#FF while testing
-
+%% For testing purpose - set the max packet size to 16#1FF while testing
+-define(NOISE_PACKET_LENGTH_SIZE, 2).
 -ifndef(TEST).
--define(MAX_PACKET_SIZE, 16#FFFF).
+-define(MAX_PACKET_SIZE, 16#FFFF - ?NOISE_PACKET_LENGTH_SIZE).
 -else.
--define(MAX_PACKET_SIZE, 16#1FF).
+-define(MAX_PACKET_SIZE, 16#1FF - ?NOISE_PACKET_LENGTH_SIZE).
 -endif.
--define(FRAGMENT_SIZE, (?MAX_PACKET_SIZE - 6)).
-do_send(ESock, Msg) when byte_size(Msg) < ?MAX_PACKET_SIZE - 2 ->
+
+-define(CHACHAPOLY_MAC_SIZE, 16).
+-define(MAX_PAYLOAD_SIZE, (?MAX_PACKET_SIZE - ?CHACHAPOLY_MAC_SIZE)).
+
+-define(FRAGMENT_HEADER_SIZE, 2 + 2 + 2).
+-define(MAX_FRAGMENT_PAYLOAD_SIZE,
+        (?MAX_PACKET_SIZE - ?FRAGMENT_HEADER_SIZE - ?CHACHAPOLY_MAC_SIZE)).
+
+do_send(ESock, Msg) when byte_size(Msg) =< ?MAX_PAYLOAD_SIZE ->
     enoise_send(ESock, Msg);
 do_send(ESock, Msg) ->
-    NChunks = (?FRAGMENT_SIZE + byte_size(Msg) - 1) div ?FRAGMENT_SIZE,
+    NChunks = (?MAX_FRAGMENT_PAYLOAD_SIZE + byte_size(Msg) - 1)
+                div ?MAX_FRAGMENT_PAYLOAD_SIZE,
     send_chunks(ESock, 1, NChunks, Msg).
 
 send_chunks(ESock, M, M, Msg) ->
     enoise:send(ESock, <<?MSG_FRAGMENT:16, M:16, M:16, Msg/binary>>);
-send_chunks(ESock, N, M, <<Chunk:?FRAGMENT_SIZE/binary, Rest/binary>>) ->
+send_chunks(ESock, N, M, <<Chunk:?MAX_FRAGMENT_PAYLOAD_SIZE/binary, Rest/binary>>) ->
     enoise_send(ESock, <<?MSG_FRAGMENT:16, N:16, M:16, Chunk/binary>>),
     send_chunks(ESock, N + 1, M, Rest).
 
@@ -1223,3 +1245,77 @@ get_micro_block_txs([TxHash | TxHashes], State, Acc) ->
         none         -> get_micro_block_txs(TxHashes, some, [TxHash | Acc]);
         {value, STx} -> get_micro_block_txs(TxHashes, State, [STx | Acc])
     end.
+
+pre_assembly_check(MicroHeader) ->
+    {ok, Hash} = aec_headers:hash_header(MicroHeader),
+    case aec_db:has_block(Hash) of
+        true -> known;
+        false ->
+            Validators = [fun validate_micro/1,
+                          fun validate_connected_to_chain/1,
+                          fun validate_delta_height/1,
+                          fun validate_prev_key_block/1,
+                          fun validate_micro_signature/1],
+            aeu_validation:run(Validators, [MicroHeader])
+    end.
+
+validate_connected_to_chain(MicroHeader) ->
+    case aec_chain_state:hash_is_connected_to_genesis(
+            aec_headers:prev_hash(MicroHeader)) of
+        true -> ok;
+        false -> {error, orphan_blocks_not_allowed}
+    end.
+
+validate_delta_height(MicroHeader) ->
+    Height = aec_headers:height(MicroHeader),
+    case aec_chain:top_header() of
+        undefined -> ok;
+        TopHeader ->
+            MaxDelta = aec_chain_state:gossip_allowed_height_from_top(),
+            case Height >= aec_headers:height(TopHeader) - MaxDelta of
+                true  -> ok;
+                false -> {error, too_far_below_top}
+            end
+    end.
+
+validate_prev_key_block(MicroHeader) ->
+    case aec_db:find_header(aec_headers:prev_hash(MicroHeader)) of
+        {value, PrevHeader} ->
+            case aec_headers:height(PrevHeader) == aec_headers:height(MicroHeader) of
+                false -> {error, wrong_prev_key_block_height};
+                true ->
+                    case aec_headers:type(PrevHeader) of
+                        key ->
+                            case aec_headers:prev_key_hash(MicroHeader) ==
+                                    aec_headers:prev_hash(MicroHeader) of
+                                true -> ok;
+                                false -> {error, wrong_prev_key_hash}
+                            end;
+                        micro ->
+                            case aec_headers:prev_key_hash(MicroHeader) ==
+                                    aec_headers:prev_key_hash(PrevHeader) of
+                                true -> ok;
+                                false -> {error, wrong_prev_key_hash}
+                            end
+                    end
+            end;
+        none ->
+            {error, orphan_blocks_not_allowed}
+    end.
+
+validate_micro(MicroHeader) ->
+    aec_headers:validate_micro_block_header(MicroHeader).
+
+validate_micro_signature(MicroHeader) ->
+    case aec_db:find_header(aec_headers:prev_key_hash(MicroHeader)) of
+        none -> {error, signer_not_found}; %% This is virtually impossible!
+        {value, KeyHeader} ->
+            Bin = aec_headers:serialize_to_signature_binary(MicroHeader),
+            Sig = aec_headers:signature(MicroHeader),
+            Signer = aec_headers:miner(KeyHeader),
+            case enacl:sign_verify_detached(Sig, Bin, Signer) of
+                {ok, _}    -> ok;
+                {error, _} -> {error, signature_verification_failed}
+            end
+    end.
+

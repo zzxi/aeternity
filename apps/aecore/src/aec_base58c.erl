@@ -27,7 +27,7 @@
                     | state
                     | poi.
 
--type extended_type() :: known_type() | {id_hash, [known_type()]}.
+-type extended_type() :: known_type() | block_hash | {id_hash, [known_type()]}.
 
 
 -type payload() :: binary().
@@ -40,7 +40,7 @@ encode(id_hash, Payload) ->
 encode(Type, Payload) ->
     Pfx = type2pfx(Type),
     Enc = base58_check(Payload),
-    <<Pfx/binary, "$", Enc/binary>>.
+    <<Pfx/binary, "_", Enc/binary>>.
 
 -spec decode(binary()) -> {known_type(), payload()}.
 decode(Bin0) ->
@@ -85,6 +85,18 @@ safe_decode({id_hash, AllowedTypes}, Enc) ->
         error:_ ->
             {error, invalid_encoding}
     end;
+safe_decode(block_hash, Enc) ->
+    try decode(Enc) of
+        {key_block_hash, Dec} ->
+            {ok, Dec};
+        {micro_block_hash, Dec} ->
+            {ok, Dec};
+        {_, _} ->
+            {error, invalid_prefix}
+    catch
+        error:_ ->
+            {error, invalid_encoding}
+    end;
 safe_decode(Type, Enc) ->
     try decode(Enc) of
         {Type, Dec} ->
@@ -110,7 +122,7 @@ base58_check(Bin) ->
     binary_to_base58(iolist_to_binary([Bin, C])).
 
 split(Bin) ->
-    binary:split(Bin, [<<"$">>], []).
+    binary:split(Bin, [<<"_">>], []).
 
 check_str(Bin) ->
     <<C:32/bitstring,_/binary>> =

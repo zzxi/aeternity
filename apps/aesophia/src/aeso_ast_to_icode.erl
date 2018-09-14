@@ -143,7 +143,7 @@ ast_body(?qid_app(["Oracle", "register"], [Acct, Sign, QFee, TTL], _, ?oracle_t(
     prim_call(?PRIM_CALL_ORACLE_REGISTER, #integer{value = 0},
               [ast_body(Acct, Icode), ast_body(Sign, Icode), ast_body(QFee, Icode), ast_body(TTL, Icode),
                ast_type_value(QType, Icode), ast_type_value(RType, Icode)],
-              [word, word, word, word, typerep, typerep], word);
+              [word, word, word, ttl_t(Icode), typerep, typerep], word);
 
 ast_body(?qid_app(["Oracle", "query_fee"], [Oracle], _, _), Icode) ->
     prim_call(?PRIM_CALL_ORACLE_QUERY_FEE, #integer{value = 0},
@@ -152,12 +152,12 @@ ast_body(?qid_app(["Oracle", "query_fee"], [Oracle], _, _), Icode) ->
 ast_body(?qid_app(["Oracle", "query"], [Oracle, Q, QFee, QTTL, RTTL], [_, QType, _, _, _], _), Icode) ->
     prim_call(?PRIM_CALL_ORACLE_QUERY, ast_body(QFee, Icode),
               [ast_body(Oracle, Icode), ast_body(Q, Icode), ast_body(QTTL, Icode), ast_body(RTTL, Icode)],
-              [word, ast_type(QType, Icode), word, word], word);
+              [word, ast_type(QType, Icode), ttl_t(Icode), ttl_t(Icode)], word);
 
 ast_body(?qid_app(["Oracle", "extend"], [Oracle, Sign, TTL], _, _), Icode) ->
     prim_call(?PRIM_CALL_ORACLE_EXTEND, #integer{value = 0},
               [ast_body(Oracle, Icode), ast_body(Sign, Icode), ast_body(TTL, Icode)],
-              [word, word, word], {tuple, []});
+              [word, word, ttl_t(Icode)], {tuple, []});
 
 ast_body(?qid_app(["Oracle", "respond"], [Oracle, Query, Sign, R], [_, _, _, RType], _), Icode) ->
     prim_call(?PRIM_CALL_ORACLE_RESPOND, #integer{value = 0},
@@ -277,7 +277,7 @@ ast_body({map, Ann, Map, [Upd | Upds]}, Icode) ->
 ast_body({id, _, Name}, _Icode) ->
     %% TODO Look up id in env
     #var_ref{name = Name};
-ast_body({bool, _, Bool}, _Icode) ->		%BOOL as ints
+ast_body({bool, _, Bool}, _Icode) ->        %BOOL as ints
     Value = if Bool -> 1 ; true -> 0 end,
     #integer{value = Value};
 ast_body({int, _, Value}, _Icode) ->
@@ -345,53 +345,53 @@ ast_body({app,As,Fun,Args}, Icode) ->
             #unop{op = Op, rand = ast_body(A, Icode)};
         _ ->
             #funcall{function=ast_body(Fun, Icode),
-	             args=[ast_body(A, Icode) || A <- Args]}
+                     args=[ast_body(A, Icode) || A <- Args]}
     end;
 ast_body({'if',_,Dec,Then,Else}, Icode) ->
     #ifte{decision = ast_body(Dec, Icode)
-	 ,then     = ast_body(Then, Icode)
-	 ,else     = ast_body(Else, Icode)};
+         ,then     = ast_body(Then, Icode)
+         ,else     = ast_body(Else, Icode)};
 ast_body({switch,_,A,Cases}, Icode) ->
     %% let's assume the parser has already ensured that only valid
     %% patterns appear in cases.
     #switch{expr=ast_body(A, Icode),
-	    cases=[{ast_body(Pat, Icode),ast_body(Body, Icode)}
-		   || {'case',_,Pat,Body} <- Cases]};
+            cases=[{ast_body(Pat, Icode),ast_body(Body, Icode)}
+              || {'case',_,Pat,Body} <- Cases]};
 ast_body({block,As,[{letval,_,Pat,_,E}|Rest]}, Icode) ->
     #switch{expr=ast_body(E, Icode),
-	    cases=[{ast_body(Pat, Icode),ast_body({block,As,Rest}, Icode)}]};
+            cases=[{ast_body(Pat, Icode),ast_body({block,As,Rest}, Icode)}]};
 ast_body({block,_,[]}, _Icode) ->
     #tuple{cpts=[]};
 ast_body({block,_,[E]}, Icode) ->
     ast_body(E, Icode);
 ast_body({block,As,[E|Rest]}, Icode) ->
     #switch{expr=ast_body(E, Icode),
-	    cases=[{#var_ref{name="_"},ast_body({block,As,Rest}, Icode)}]};
+            cases=[{#var_ref{name="_"},ast_body({block,As,Rest}, Icode)}]};
 ast_body({lam,_,Args,Body}, Icode) ->
     #lambda{args=[#arg{name = ast_id(P), type = ast_type(T, Icode)} || {arg,_,P,T} <- Args],
-	    body=ast_body(Body, Icode)};
+            body=ast_body(Body, Icode)};
 ast_body({typed,_,{record,Attrs,Fields},{record_t,DefFields}}, Icode) ->
     %% Compile as a tuple with the fields in the order they appear in the definition.
     NamedField = fun({field, _, [{proj, _, {id, _, Name}}], E}) -> {Name, E} end,
     NamedFields = lists:map(NamedField, Fields),
     #tuple{cpts =
-	       [case proplists:get_value(Name,NamedFields) of
-		    undefined ->
+               [case proplists:get_value(Name,NamedFields) of
+                    undefined ->
                         io:format("~p not in ~p\n", [Name, NamedFields]),
-			Line = aeso_syntax:get_ann(line, Attrs),
-			#missing_field{format = "Missing field in record: ~s (on line ~p)\n",
-				       args = [Name,Line]};
-		    E ->
-			ast_body(E, Icode)
-		end
-		|| {field_t,_,{id,_,Name},_} <- DefFields]};
+                        Line = aeso_syntax:get_ann(line, Attrs),
+                        #missing_field{format = "Missing field in record: ~s (on line ~p)\n",
+                        args = [Name,Line]};
+                    E ->
+                        ast_body(E, Icode)
+                end
+                || {field_t,_,{id,_,Name},_} <- DefFields]};
 ast_body({typed,_,{record,Attrs,_Fields},T}, _Icode) ->
     error({record_has_bad_type,Attrs,T});
 ast_body({proj,_,{typed,_,Record,{record_t,Fields}},{id,_,FieldName}}, Icode) ->
     [Index] = [I
-	       || {I,{field_t,_,{id,_,Name},_}} <-
-		      lists:zip(lists:seq(1,length(Fields)),Fields),
-		  Name==FieldName],
+              || {I,{field_t,_,{id,_,Name},_}} <-
+                  lists:zip(lists:seq(1,length(Fields)),Fields),
+              Name==FieldName],
     #binop{op = '!', left = #integer{value = 32*(Index-1)}, right = ast_body(Record, Icode)};
 ast_body({record, Attrs, {typed, _, Record, RecType={record_t, Fields}}, Update}, Icode) ->
     UpdatedName = fun({field, _,     [{proj, _, {id, _, Name}}], _}) -> Name;
@@ -406,16 +406,16 @@ ast_body({record, Attrs, {typed, _, Record, RecType={record_t, Fields}}, Update}
         end,
 
     #switch{expr=ast_body(Record, Icode),
-	    cases=[{#var_ref{name = "_record"},
-		    ast_body({typed, Attrs,
-			      {record, Attrs,
-			       lists:map(CompileUpdate, Update) ++
-				[{field, Attrs, [{proj, Attrs, {id, Attrs, Name}}],
-				     {proj, Attrs, Rec, {id, Attrs, Name}}}
-				    || {field_t, _, {id, _, Name}, _} <- Fields,
-				       not lists:member(Name, UpdatedNames)]},
-			      RecType}, Icode)}
-		   ]};
+            cases=[{#var_ref{name = "_record"},
+                ast_body({typed, Attrs,
+                      {record, Attrs,
+                      lists:map(CompileUpdate, Update) ++
+                    [{field, Attrs, [{proj, Attrs, {id, Attrs, Name}}],
+                        {proj, Attrs, Rec, {id, Attrs, Name}}}
+                        || {field_t, _, {id, _, Name}, _} <- Fields,
+                          not lists:member(Name, UpdatedNames)]},
+                      RecType}, Icode)}
+              ]};
 ast_body({typed, _, Body, _}, Icode) ->
     ast_body(Body, Icode).
 
@@ -469,6 +469,8 @@ ast_typerep(Type) -> ast_typerep(Type, aeso_icode:new([])).
 
 ast_typerep({id, _, Name}, Icode) ->
     lookup_type_id(Name, [], Icode);
+ast_typerep({qid, _, Name}, Icode) ->
+    lookup_type_id(Name, [], Icode);
 ast_typerep({con, _, _}, _) ->
     word;   %% Contract type
 ast_typerep({app_t, _, {id, _, Name}, Args}, Icode) ->
@@ -494,6 +496,9 @@ ast_typerep({variant_t, Cons}, Icode) ->
                   {constr_t, _, _, Args} = Con,
                   [ ast_typerep(Arg, Icode) || Arg <- Args ]
                 end || Con <- Cons ]}.
+
+ttl_t(Icode) ->
+    ast_typerep({qid, [], ["Chain", "ttl"]}, Icode).
 
 lookup_type_id(Name, Args, #{ types := Types }) ->
     case maps:get(Name, Types, undefined) of

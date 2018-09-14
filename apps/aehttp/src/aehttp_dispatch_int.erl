@@ -32,6 +32,20 @@
         Context :: #{}
                    ) -> {Status :: cowboy:http_status(), Headers :: list(), Body :: map()}.
 
+handle_request('PostKeyBlock', #{'KeyBlock' := Data}, _Context) ->
+    case aec_headers:deserialize_from_client(key, Data) of
+        {ok, Header} ->
+            KeyBlock = aec_blocks:new_key_from_header(Header),
+            case aec_conductor:post_block(KeyBlock) of
+                ok ->
+                    {200, [], #{}};
+                {error, _Rsn} ->
+                    {400, [], #{reason => <<"Block rejected">>}}
+            end;
+        {error, _} ->
+            {400, [], #{reason => <<"Invalid block">>}}
+    end;
+
 handle_request('PostSpend', #{'SpendTx' := Req}, _Context) ->
     AllowedRecipients = [account_pubkey, name, oracle_pubkey, contract_pubkey],
     ParseFuns = [parse_map_to_atom_keys(),
@@ -369,7 +383,7 @@ handle_request('PostOracleExtend', #{'OracleExtendTx' := Req}, _Context) ->
                  read_optional_params([{ttl, ttl, '$no_value'}]),
                  base58_decode([{oracle_id, oracle_id, {id_hash, [oracle_pubkey]}}]),
                  get_nonce_from_account_id(oracle_id),
-                 ttl_decode(oracle_ttl),
+                 relative_ttl_decode(oracle_ttl),
                  unsigned_tx_response(fun aeo_extend_tx:new/1)
                 ],
     process_request(ParseFuns, Req);

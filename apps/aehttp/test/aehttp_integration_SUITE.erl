@@ -27,6 +27,7 @@
     get_current_key_block_hash/1,
     get_current_key_block_height/1,
     get_pending_key_block/1,
+    post_key_block/1,
     get_key_block_by_hash/1,
     get_key_block_by_height/1
    ]).
@@ -269,21 +270,17 @@ groups() ->
      {on_genesis_block, [sequence],
       [
        {group, block_info},
-       {group, chain_with_pending_key_block}
+       post_key_block
       ]},
      {on_key_block, [sequence],
       [
        {group, block_info},
-       {group, chain_with_pending_key_block}
+       post_key_block
       ]},
      {on_micro_block, [sequence],
       [
        {group, block_info},
-       {group, chain_with_pending_key_block}
-      ]},
-     {chain_with_pending_key_block, [],
-      [
-       get_pending_key_block
+       post_key_block
       ]},
      {block_info, [sequence],
       [
@@ -588,11 +585,13 @@ init_per_group(Group, Config) when
 init_per_group(on_genesis_block = Group, Config) ->
     Config1 = start_node(Group, Config),
     GenesisBlock = rpc(aec_chain, genesis_block, []),
+    {ok, PendingKeyBlock} = wait_for_key_block_candidate(),
     [{current_block, GenesisBlock},
      {current_block_hash, hash(key, GenesisBlock)},
      {current_block_hash_wrong_type, hash(micro, GenesisBlock)},
      {current_block_height, 0},
-     {current_block_type, genesis_block} | Config1];
+     {current_block_type, genesis_block},
+     {pending_key_block, PendingKeyBlock} | Config1];
 init_per_group(on_key_block = Group, Config) ->
     Config1 = start_node(Group, Config),
     Node = ?config(node, Config1),
@@ -600,11 +599,13 @@ init_per_group(on_key_block = Group, Config) ->
     aecore_suite_utils:mine_key_blocks(Node, aecore_suite_utils:latest_fork_height()),
     {ok, [KeyBlock]} = aecore_suite_utils:mine_key_blocks(Node, 1),
     true = aec_blocks:is_key_block(KeyBlock),
+    {ok, PendingKeyBlock} = wait_for_key_block_candidate(),
     [{current_block, KeyBlock},
      {current_block_hash, hash(key, KeyBlock)},
      {current_block_hash_wrong_type, hash(micro, KeyBlock)},
      {current_block_height, aec_blocks:height(KeyBlock)},
-     {current_block_type, key_block} | Config1];
+     {current_block_type, key_block},
+     {pending_key_block, PendingKeyBlock} | Config1];
 init_per_group(on_micro_block = Group, Config) ->
     Config1 = start_node(Group, Config),
     Node = ?config(node, Config1),
@@ -619,6 +620,7 @@ init_per_group(on_micro_block = Group, Config) ->
     {ok, []} = rpc:call(Node, aec_tx_pool, peek, [infinity]),
     true = aec_blocks:is_key_block(KeyBlock),
     false = aec_blocks:is_key_block(MicroBlock),
+    {ok, PendingKeyBlock} = wait_for_key_block_candidate(),
     [{prev_key_block, KeyBlock},
      {prev_key_block_hash, hash(key, KeyBlock)},
      {prev_key_block_height, aec_blocks:height(KeyBlock)},
@@ -626,16 +628,8 @@ init_per_group(on_micro_block = Group, Config) ->
      {current_block_hash, hash(micro, MicroBlock)},
      {current_block_height, aec_blocks:height(KeyBlock)},
      {current_block_txs, [Tx]},
-     {current_block_type, micro_block} | Config1];
-init_per_group(chain_with_pending_key_block, Config) ->
-    %% Expect a key block each hour.
-    MineRate = 60 * 60 * 1000,
-    ok = rpc(application, set_env, [aecore, expected_mine_rate, MineRate]),
-    ok = rpc(aec_conductor, start_mining, []),
-    {ok, PendingKeyBlock} = wait_for_key_block_candidate(),
-    [{expected_mine_rate, MineRate},
-     {pending_key_block, PendingKeyBlock},
-     {pending_key_block_hash, hash(key, PendingKeyBlock)} | Config];
+     {current_block_type, micro_block},
+     {pending_key_block, PendingKeyBlock} | Config1];
 init_per_group(block_info, Config) ->
     Config;
 %% account_endpoints
@@ -767,8 +761,6 @@ end_per_group(Group, _Config) when
       Group =:= account_info;
       Group =:= tx_info ->
     ok;
-end_per_group(chain_with_pending_key_block, _Config) ->
-    ok = rpc(aec_conductor, stop_mining, []);
 end_per_group(account_with_pending_tx, _Config) ->
     ok;
 end_per_group(oracle_txs, _Config) ->
@@ -1045,13 +1037,9 @@ get_current_key_block_height(_CurrentBlockType, Config) ->
 
 get_pending_key_block(Config) ->
     CurrentBlockType = ?config(current_block_type, Config),
-    get_pending_key_block(proplists:is_defined(pending_key_block, Config), CurrentBlockType, Config).
+    get_pending_key_block(CurrentBlockType, Config).
 
-get_pending_key_block(false, _CurrentBlockType, _Config) ->
-    {ok, 404, Error} = get_key_blocks_pending_sut(),
-    ?assertEqual(<<"Block not found">>, maps:get(<<"reason">>, Error)),
-    ok;
-get_pending_key_block(true, _CurrentBlockType, Config) ->
+get_pending_key_block(_CurrentBlockType, Config) ->
     CurrentBlockHash = ?config(current_block_hash, Config),
     CurrentBlockHeight = ?config(current_block_height, Config),
     Pred =
@@ -1106,6 +1094,41 @@ get_key_block_by_height(micro_block, Config) ->
     ?assertEqual(PrevKeyBlockHeight, maps:get(<<"height">>, Block)),
     ok.
 
+post_key_block(Config) ->
+    post_key_block(?config(current_block_type, Config), Config).
+
+post_key_block(_CurrentBlockType, Config) ->
+    {ok, 200, #{<<"height">> := Height} = PendingKeyBlock} = get_key_blocks_pending_sut(),
+
+    KeyBlock = PendingKeyBlock#{<<"pow">> => lists:duplicate(42, 1), <<"nonce">> => 1},
+    {ok, 400, Error} = post_key_blocks_sut(KeyBlock),
+    %% Block is always rejected - pow and nonce are not correct.
+    ?assertEqual(<<"Block rejected">>, maps:get(<<"reason">>, Error)),
+
+    KeyBlock1 = PendingKeyBlock#{<<"pow">> => lists:duplicate(42, 0), <<"nonce">> => 0},
+    {ok, KeyBlockHeader} = aec_headers:deserialize_from_client(key, KeyBlock1),
+    KeyBlockHeaderBin = aec_headers:serialize_to_binary(KeyBlockHeader),
+    Target = aec_headers:target(KeyBlockHeader),
+    Nonce = aec_pow:pick_nonce(),
+    {ok, {Nonce1, PowEvidence}} = mine_key_block(KeyBlockHeaderBin, Target, Nonce, 1000),
+    {ok, 200, #{}} = post_key_blocks_sut(PendingKeyBlock#{<<"pow">> => PowEvidence, <<"nonce">> => Nonce1}),
+    ok = aecore_suite_utils:wait_for_height(?config(node, Config), Height),
+    {ok, 200, CurrentBlock} = get_key_blocks_current_sut(),
+    ?assertEqual(Height, maps:get(<<"height">>, CurrentBlock)),
+    ?assertEqual(PowEvidence, maps:get(<<"pow">>, CurrentBlock)),
+    ?assertEqual(Nonce1, maps:get(<<"nonce">>, CurrentBlock)),
+    ok.
+
+mine_key_block(HeaderBin, Target, Nonce, Attempts) when Attempts > 0 ->
+    case rpc(aec_mining, mine, [HeaderBin, Target, Nonce]) of
+        {ok, {Nonce, PowEvidence}} = Res ->
+            Res;
+        {error, no_solution} ->
+            mine_key_block(HeaderBin, Target, aec_pow:next_nonce(Nonce), Attempts - 1)
+    end;
+mine_key_block(_HeaderBin, _Target, _Nonce, 0) ->
+    {error, no_solution}.
+
 get_key_blocks_current_sut() ->
     Host = external_address(),
     http_request(Host, get, "key-blocks/current", []).
@@ -1129,6 +1152,10 @@ get_key_blocks_by_height_sut(Height) ->
 get_key_blocks_by_hash_sut(Hash) ->
     Host = external_address(),
     http_request(Host, get, "key-blocks/hash/" ++ http_uri:encode(Hash), []).
+
+post_key_blocks_sut(KeyBlock) ->
+    Host = internal_address(),
+    http_request(Host, post, "key-blocks", KeyBlock).
 
 %% /micro-blocks/*
 
@@ -1720,16 +1747,16 @@ get_peers_pubkey_sut() ->
 
 get_status(_Config) ->
     {ok, 200, #{
-       <<"genesis-key-block-hash">>     := _,
+       <<"genesis_key_block_hash">>     := _,
        <<"solutions">>                  := _,
        <<"difficulty">>                 := _,
        <<"syncing">>                    := _,
        <<"listening">>                  := _,
        <<"protocols">>                  := _,
-       <<"node-version">>               := _,
-       <<"node-revision">>              := _,
-       <<"peer-count">>                 := _,
-       <<"pending-transactions-count">> := _
+       <<"node_version">>               := _,
+       <<"node_revision">>              := _,
+       <<"peer_count">>                 := _,
+       <<"pending_transactions_count">> := _
       }} = get_status_sut(),
     ok.
 
@@ -1779,14 +1806,13 @@ hash(micro, Block) ->
 
 wait_for_key_block_candidate() -> wait_for_key_block_candidate(10).
 
-wait_for_key_block_candidate(0) -> {error, miner_starting};
+wait_for_key_block_candidate(0) -> {error, not_found};
 wait_for_key_block_candidate(N) ->
     case rpc(aec_conductor, get_key_block_candidate, []) of
         {ok, Block} -> {ok, Block};
-        {error, not_mining} -> {error, not_mining};
-        {error, miner_starting} ->
+        {error, _Rsn} = Err ->
             timer:sleep(10),
-            wait_for_key_block_candidate(N)
+            wait_for_key_block_candidate(N - 1)
     end.
 
 save_config(Keys, Config) ->
@@ -3392,15 +3418,22 @@ sc_ws_open(Config) ->
     ChannelOpts = channel_options(IPubkey, RPubkey, IAmt, RAmt),
     {ok, IConnPid} = channel_ws_start(initiator,
                                            maps:put(host, <<"localhost">>, ChannelOpts)),
-    ok = ?WS:register_test_for_channel_events(IConnPid, [info, sign, on_chain_tx]),
+    ok = ?WS:register_test_for_channel_events(IConnPid, [info, get, sign, on_chain_tx]),
 
     {ok, RConnPid} = channel_ws_start(responder, ChannelOpts),
 
-    ok = ?WS:register_test_for_channel_events(RConnPid, [info, sign, on_chain_tx]),
+    ok = ?WS:register_test_for_channel_events(RConnPid, [info, get, sign, on_chain_tx]),
 
     channel_send_conn_open_infos(RConnPid, IConnPid),
 
     ChannelCreateFee = channel_create(Config, IConnPid, RConnPid),
+    {ok, {IBal, RBal}} = sc_ws_get_both_balances(IConnPid,
+                                                 IPubkey,
+                                                 RPubkey),
+    %% assert off-chain balances
+    PushAmt = maps:get(push_amount, ChannelOpts),
+    IBal = IAmt - PushAmt,
+    RBal = RAmt + PushAmt,
 
     %% ensure new balances
     assert_balance(IPubkey, IStartAmt - IAmt - ChannelCreateFee),
@@ -4182,7 +4215,7 @@ contract_id_from_create_update(Owner, OffchainTx) ->
 
 
 create_contract_(TestName, SenderConnPid, UpdateVolley) ->
-		Code = contract_byte_code(TestName),
+                 Code = contract_byte_code(TestName),
     InitArgument = contract_create_init_arg(TestName),
     {ok, EncodedInitData} = aect_sophia:encode_call_data(Code, <<"init">>,
                                                          InitArgument),
@@ -4283,18 +4316,18 @@ contract_byte_code(TestName) ->
     ContractString = aeso_test_utils:read_contract(TestName),
     BinCode = aeso_compiler:from_string(ContractString, []),
     HexCode = aeu_hex:hexstring_encode(BinCode),
-		HexCode.
+    HexCode.
 
 
 contract_return_type(_) ->
-		<<"int">>.
+    <<"int">>.
 
 contract_create_init_arg("identity") ->
-		<<"()">>;
+    <<"()">>;
 contract_create_init_arg("counter") ->
-		<<"(21)">>;
+    <<"(21)">>;
 contract_create_init_arg("spend_test") ->
-		<<"()">>.
+    <<"()">>.
 
 contract_result_parse(_TestName, Data) ->
   #{<<"type">> := <<"word">>, <<"value">> := DecodedCallResult} = Data,
@@ -4347,7 +4380,7 @@ channel_options(IPubkey, RPubkey, IAmt, RAmt, Other) ->
                   initiator_id => aec_base58c:encode(account_pubkey, IPubkey),
                   responder_id => aec_base58c:encode(account_pubkey, RPubkey),
                   lock_period => 10,
-                  push_amount => 10,
+                  push_amount => 1,
                   initiator_amount => IAmt,
                   responder_amount => RAmt,
                   channel_reserve => 2

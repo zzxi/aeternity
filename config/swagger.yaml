@@ -2,7 +2,7 @@ swagger: '2.0'
 openapi: '3.0.0'
 info:
   description: 'This is the [Aeternity](https://www.aeternity.com/) Epoch API.'
-  version: 0.22.0
+  version: 0.23.0
   title: Aeternity Epoch
   termsOfService: 'https://www.aeternity.com/terms/'
   contact:
@@ -201,6 +201,32 @@ paths:
             $ref: '#/definitions/KeyBlock'
         '404':
           description: 'Block not found'
+          schema:
+            $ref: '#/definitions/Error'
+      security:
+  /key-blocks:
+    post:
+      tags:
+        - internal
+        - chain
+      operationId: PostKeyBlock
+      description: 'Post a mined key block'
+      consumes:
+        - application/json
+      produces:
+        - application/json
+      parameters:
+        - in: body
+          name: body
+          description: 'Mined key block'
+          required: true
+          schema:
+            $ref: '#/definitions/KeyBlock'
+      responses:
+        '200':
+          description: 'Successful operation'
+        '400':
+          description: 'Invalid block'
           schema:
             $ref: '#/definitions/Error'
       security:
@@ -1721,6 +1747,8 @@ definitions:
         format: int64
       prev_hash:
         $ref: '#/definitions/EncodedHash'
+      prev_key_hash:
+        $ref: '#/definitions/EncodedHash'
       state_hash:
         $ref: '#/definitions/EncodedHash'
       txs_hash:
@@ -1752,6 +1780,8 @@ definitions:
         type: integer
         format: int64
       prev_hash:
+        $ref: '#/definitions/EncodedHash'
+      prev_key_hash:
         $ref: '#/definitions/EncodedHash'
       state_hash:
         $ref: '#/definitions/EncodedHash'
@@ -1902,7 +1932,7 @@ definitions:
         type: integer
         format: int64
       oracle_ttl:
-        $ref: '#/definitions/TTL'
+        $ref: '#/definitions/RelativeTTL'
       oracle_id:
         $ref: '#/definitions/EncodedHash'
       nonce:
@@ -2320,8 +2350,17 @@ definitions:
         $ref: '#/definitions/EncodedHash'
       payload:
         type: string
-      solo_payload:
-        type: string
+      round:
+        type: integer
+        format: int64
+        minimum: 0
+        description: 'Channel''s next round'
+      update:
+        $ref: '#/definitions/OffChainUpdate'
+        description: Update to be applied. Must be a OffChainCallContract
+      state_hash:
+        $ref: '#/definitions/EncodedHash'
+        description: 'Channel''s next state_hash'
       addresses:
         type: array
         minItems: 1
@@ -2348,7 +2387,9 @@ definitions:
     - channel_id
     - from_id
     - payload
-    - solo_payload
+    - round
+    - update
+    - state_hash
     - addresses
     - poi
     - fee
@@ -2512,7 +2553,7 @@ definitions:
   Status:
     type: object
     properties:
-      genesis-key-block-hash:
+      genesis_key_block_hash:
         $ref: '#/definitions/EncodedHash'
       solutions:
         type: integer
@@ -2529,15 +2570,15 @@ definitions:
         type: array
         items:
           $ref: '#/definitions/Protocol'
-      node-version:
+      node_version:
         type: string
-      node-revision:
+      node_revision:
         type: string
-      peer-count:
+      peer_count:
         type: integer
         format: int64
         minimum: 0
-      pending-transactions-count:
+      pending_transactions_count:
         type: integer
         format: int64
         minimum: 0
@@ -3050,6 +3091,129 @@ definitions:
             $ref: '#/definitions/EncodedHash'
     required:
     - tx
+  OffChainUpdate:
+    type: object
+    discriminator: op
+    properties:
+      op:
+        type: string
+    required:
+      - op
+  OffChainTransfer:
+    allOf:
+      - $ref: '#/definitions/OffChainUpdate'
+      - type: object
+        properties:
+          from:
+            $ref: '#/definitions/EncodedHash'
+            description: Sender of tokens
+          to:
+            $ref: '#/definitions/EncodedHash'
+            description: Receiver of tokens
+          am:
+            type: integer
+            description: Amount of tokens to transfer
+            format: int64
+        required:
+        - from
+        - to
+        - am
+  OffChainWithdrawal:
+    allOf:
+      - $ref: '#/definitions/OffChainUpdate'
+      - type: object
+        properties:
+          to:
+            $ref: '#/definitions/EncodedHash'
+            description: Withdrawer of tokens
+          am:
+            type: integer
+            description: Amount of tokens to withdraw
+            format: int64
+        required:
+        - to
+        - am
+  OffChainDeposit:
+    allOf:
+      - $ref: '#/definitions/OffChainUpdate'
+      - type: object
+        properties:
+          from:
+            $ref: '#/definitions/EncodedHash'
+            description: Depositor of tokens
+          am:
+            type: integer
+            description: Amount of tokens to deposit
+            format: int64
+        required:
+        - from
+        - am
+  OffChainNewContract:
+    allOf:
+      - $ref: '#/definitions/OffChainUpdate'
+      - type: object
+        properties:
+          owner:
+            $ref: '#/definitions/EncodedHash'
+            description: Contract owner
+          vm_version:
+            type: integer
+            description: VM version of the contract
+            format: int64
+          code:
+            $ref: '#/definitions/ByteCode'
+          deposit:
+            type: integer
+            description: Amount of tokens to deposit to the new contract
+            format: int64
+          call_data:
+            description: Contract call data
+            type: string
+        required:
+        - owner
+        - vm_version
+        - code
+        - deposit
+        - call_data
+  OffChainCallContract:
+    allOf:
+      - $ref: '#/definitions/OffChainUpdate'
+      - type: object
+        properties:
+          caller:
+            $ref: '#/definitions/EncodedHash'
+            description: Contract caller
+          contract:
+            $ref: '#/definitions/EncodedHash'
+            description: Contract address
+          vm_version:
+            type: integer
+            description: VM version of the contract
+            format: int64
+          amount:
+            type: integer
+            description: Amount of tokens to transfer to the contract
+            format: int64
+          gas:
+            type: integer
+            description: Gas limit for the contract call
+            format: int64
+          gas_price:
+            type: integer
+            description: Gas price for the contract call
+            format: int64
+          call_data:
+            description: Contract call data
+            type: string
+        required:
+        - caller
+        - contract
+        - vm_version
+        - code
+        - amount
+        - call_data
+        - gas
+        - gas_price
 
 externalDocs:
   description: Find out more about Aeternity

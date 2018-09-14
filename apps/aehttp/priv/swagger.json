@@ -2,7 +2,7 @@
   "swagger" : "2.0",
   "info" : {
     "description" : "This is the [Aeternity](https://www.aeternity.com/) Epoch API.",
-    "version" : "0.22.0",
+    "version" : "0.23.0",
     "title" : "Aeternity Epoch",
     "termsOfService" : "https://www.aeternity.com/terms/",
     "contact" : {
@@ -221,6 +221,35 @@
           },
           "404" : {
             "description" : "Block not found",
+            "schema" : {
+              "$ref" : "#/definitions/Error"
+            }
+          }
+        }
+      }
+    },
+    "/key-blocks" : {
+      "post" : {
+        "tags" : [ "internal", "chain" ],
+        "description" : "Post a mined key block",
+        "operationId" : "PostKeyBlock",
+        "consumes" : [ "application/json" ],
+        "produces" : [ "application/json" ],
+        "parameters" : [ {
+          "in" : "body",
+          "name" : "body",
+          "description" : "Mined key block",
+          "required" : true,
+          "schema" : {
+            "$ref" : "#/definitions/KeyBlock"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "Successful operation"
+          },
+          "400" : {
+            "description" : "Invalid block",
             "schema" : {
               "$ref" : "#/definitions/Error"
             }
@@ -2018,6 +2047,9 @@
         "prev_hash" : {
           "$ref" : "#/definitions/EncodedHash"
         },
+        "prev_key_hash" : {
+          "$ref" : "#/definitions/EncodedHash"
+        },
         "state_hash" : {
           "$ref" : "#/definitions/EncodedHash"
         },
@@ -2052,17 +2084,18 @@
       },
       "example" : {
         "txs_hash" : null,
-        "beneficiary" : null,
-        "state_hash" : null,
         "prev_hash" : null,
-        "pow" : "",
-        "time" : 5,
         "nonce" : 1,
         "version" : 5,
-        "hash" : { },
         "miner" : null,
-        "height" : 0,
-        "target" : 6
+        "target" : 6,
+        "beneficiary" : null,
+        "state_hash" : null,
+        "pow" : "",
+        "prev_key_hash" : null,
+        "time" : 5,
+        "hash" : { },
+        "height" : 0
       }
     },
     "MicroBlockHeader" : {
@@ -2076,6 +2109,9 @@
           "format" : "int64"
         },
         "prev_hash" : {
+          "$ref" : "#/definitions/EncodedHash"
+        },
+        "prev_key_hash" : {
           "$ref" : "#/definitions/EncodedHash"
         },
         "state_hash" : {
@@ -2101,6 +2137,7 @@
         "state_hash" : null,
         "signature" : null,
         "prev_hash" : null,
+        "prev_key_hash" : null,
         "time" : 6,
         "version" : 1,
         "hash" : { },
@@ -2391,7 +2428,7 @@
           "format" : "int64"
         },
         "oracle_ttl" : {
-          "$ref" : "#/definitions/TTL"
+          "$ref" : "#/definitions/RelativeTTL"
         },
         "oracle_id" : {
           "$ref" : "#/definitions/EncodedHash"
@@ -2412,8 +2449,8 @@
           "type" : "delta",
           "value" : 1
         },
-        "nonce" : 6,
-        "ttl" : 1
+        "nonce" : 1,
+        "ttl" : 5
       }
     },
     "OracleQueryTx" : {
@@ -2464,9 +2501,9 @@
           "type" : "delta",
           "value" : 1
         },
-        "fee" : 1,
+        "fee" : 6,
         "query_fee" : 0,
-        "ttl" : 5,
+        "ttl" : 1,
         "nonce" : 5,
         "sender_id" : null
       }
@@ -3044,7 +3081,7 @@
     },
     "ChannelForceProgressTx" : {
       "type" : "object",
-      "required" : [ "addresses", "channel_id", "fee", "from_id", "payload", "poi", "solo_payload" ],
+      "required" : [ "addresses", "channel_id", "fee", "from_id", "payload", "poi", "round", "state_hash", "update" ],
       "properties" : {
         "channel_id" : {
           "$ref" : "#/definitions/EncodedHash"
@@ -3055,8 +3092,19 @@
         "payload" : {
           "type" : "string"
         },
-        "solo_payload" : {
-          "type" : "string"
+        "round" : {
+          "type" : "integer",
+          "format" : "int64",
+          "description" : "Channel's next round",
+          "minimum" : 0
+        },
+        "update" : {
+          "description" : "Update to be applied. Must be a OffChainCallContract",
+          "$ref" : "#/definitions/OffChainUpdate"
+        },
+        "state_hash" : {
+          "description" : "Channel's next state_hash",
+          "$ref" : "#/definitions/EncodedHash"
         },
         "addresses" : {
           "type" : "array",
@@ -3312,7 +3360,7 @@
     "Status" : {
       "type" : "object",
       "properties" : {
-        "genesis-key-block-hash" : {
+        "genesis_key_block_hash" : {
           "$ref" : "#/definitions/EncodedHash"
         },
         "solutions" : {
@@ -3336,18 +3384,18 @@
             "$ref" : "#/definitions/Protocol"
           }
         },
-        "node-version" : {
+        "node_version" : {
           "type" : "string"
         },
-        "node-revision" : {
+        "node_revision" : {
           "type" : "string"
         },
-        "peer-count" : {
+        "peer_count" : {
           "type" : "integer",
           "format" : "int64",
           "minimum" : 0
         },
-        "pending-transactions-count" : {
+        "pending_transactions_count" : {
           "type" : "integer",
           "format" : "int64",
           "minimum" : 0
@@ -3356,20 +3404,20 @@
       "example" : {
         "difficulty" : 6.02745618307040320615897144307382404804229736328125,
         "listening" : true,
+        "peer_count" : 0,
+        "pending_transactions_count" : 0,
+        "genesis_key_block_hash" : { },
         "syncing" : true,
-        "node-version" : "node-version",
+        "node_revision" : "node_revision",
         "solutions" : 0,
-        "node-revision" : "node-revision",
-        "peer-count" : 0,
+        "node_version" : "node_version",
         "protocols" : [ {
           "protocol_version" : 1,
           "effective_at_height" : 0
         }, {
           "protocol_version" : 1,
           "effective_at_height" : 0
-        } ],
-        "pending-transactions-count" : 0,
-        "genesis-key-block-hash" : { }
+        } ]
       }
     },
     "Protocol" : {
@@ -4168,19 +4216,164 @@
         "micro_blocks" : [ { }, { } ],
         "key_block" : {
           "txs_hash" : null,
-          "beneficiary" : null,
-          "state_hash" : null,
           "prev_hash" : null,
-          "pow" : "",
-          "time" : 5,
           "nonce" : 1,
           "version" : 5,
-          "hash" : { },
           "miner" : null,
-          "height" : 0,
-          "target" : 6
+          "target" : 6,
+          "beneficiary" : null,
+          "state_hash" : null,
+          "pow" : "",
+          "prev_key_hash" : null,
+          "time" : 5,
+          "hash" : { },
+          "height" : 0
         }
       }
+    },
+    "OffChainUpdate" : {
+      "type" : "object",
+      "required" : [ "op" ],
+      "discriminator" : "op",
+      "properties" : {
+        "op" : {
+          "type" : "string"
+        }
+      }
+    },
+    "OffChainTransfer" : {
+      "allOf" : [ {
+        "$ref" : "#/definitions/OffChainUpdate"
+      }, {
+        "type" : "object",
+        "required" : [ "am", "from", "to" ],
+        "properties" : {
+          "from" : {
+            "description" : "Sender of tokens",
+            "$ref" : "#/definitions/EncodedHash"
+          },
+          "to" : {
+            "description" : "Receiver of tokens",
+            "$ref" : "#/definitions/EncodedHash"
+          },
+          "am" : {
+            "type" : "integer",
+            "format" : "int64",
+            "description" : "Amount of tokens to transfer"
+          }
+        }
+      } ]
+    },
+    "OffChainWithdrawal" : {
+      "allOf" : [ {
+        "$ref" : "#/definitions/OffChainUpdate"
+      }, {
+        "type" : "object",
+        "required" : [ "am", "to" ],
+        "properties" : {
+          "to" : {
+            "description" : "Withdrawer of tokens",
+            "$ref" : "#/definitions/EncodedHash"
+          },
+          "am" : {
+            "type" : "integer",
+            "format" : "int64",
+            "description" : "Amount of tokens to withdraw"
+          }
+        }
+      } ]
+    },
+    "OffChainDeposit" : {
+      "allOf" : [ {
+        "$ref" : "#/definitions/OffChainUpdate"
+      }, {
+        "type" : "object",
+        "required" : [ "am", "from" ],
+        "properties" : {
+          "from" : {
+            "description" : "Depositor of tokens",
+            "$ref" : "#/definitions/EncodedHash"
+          },
+          "am" : {
+            "type" : "integer",
+            "format" : "int64",
+            "description" : "Amount of tokens to deposit"
+          }
+        }
+      } ]
+    },
+    "OffChainNewContract" : {
+      "allOf" : [ {
+        "$ref" : "#/definitions/OffChainUpdate"
+      }, {
+        "type" : "object",
+        "required" : [ "call_data", "code", "deposit", "owner", "vm_version" ],
+        "properties" : {
+          "owner" : {
+            "description" : "Contract owner",
+            "$ref" : "#/definitions/EncodedHash"
+          },
+          "vm_version" : {
+            "type" : "integer",
+            "format" : "int64",
+            "description" : "VM version of the contract"
+          },
+          "code" : {
+            "$ref" : "#/definitions/ByteCode"
+          },
+          "deposit" : {
+            "type" : "integer",
+            "format" : "int64",
+            "description" : "Amount of tokens to deposit to the new contract"
+          },
+          "call_data" : {
+            "type" : "string",
+            "description" : "Contract call data"
+          }
+        }
+      } ]
+    },
+    "OffChainCallContract" : {
+      "allOf" : [ {
+        "$ref" : "#/definitions/OffChainUpdate"
+      }, {
+        "type" : "object",
+        "required" : [ "amount", "call_data", "caller", "contract", "gas", "gas_price", "vm_version" ],
+        "properties" : {
+          "caller" : {
+            "description" : "Contract caller",
+            "$ref" : "#/definitions/EncodedHash"
+          },
+          "contract" : {
+            "description" : "Contract address",
+            "$ref" : "#/definitions/EncodedHash"
+          },
+          "vm_version" : {
+            "type" : "integer",
+            "format" : "int64",
+            "description" : "VM version of the contract"
+          },
+          "amount" : {
+            "type" : "integer",
+            "format" : "int64",
+            "description" : "Amount of tokens to transfer to the contract"
+          },
+          "gas" : {
+            "type" : "integer",
+            "format" : "int64",
+            "description" : "Gas limit for the contract call"
+          },
+          "gas_price" : {
+            "type" : "integer",
+            "format" : "int64",
+            "description" : "Gas price for the contract call"
+          },
+          "call_data" : {
+            "type" : "string",
+            "description" : "Contract call data"
+          }
+        }
+      } ]
     },
     "inline_response_200" : {
       "properties" : {
