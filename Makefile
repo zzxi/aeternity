@@ -327,6 +327,8 @@ internal-clean: $$(KIND)
 internal-distclean: $$(KIND)
 	@rm -rf ./_build/$(KIND)
 
+compile-aes: 
+	( cd scripts && ./compile_test_contract $(CONTRACT) ; )
 
 .PHONY: \
 	all console \

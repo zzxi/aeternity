@@ -124,7 +124,8 @@
          fp_is_replaced_by_same_round_snapshot/1,
          % already closing
          fp_after_solo_close/1,
-         fp_after_slash/1
+         fp_after_slash/1,
+         fp_call_onchain_objects/1
         ]).
 
 % negative force progress
@@ -277,7 +278,9 @@ groups() ->
        fp_is_replaced_by_same_round_snapshot,
        % already closing
        fp_after_solo_close,
-       fp_after_slash
+       fp_after_slash,
+       % contract referring to on-chain objects
+       fp_call_onchain_objects
       ]},
      {force_progress_negative, [sequence],
       [fp_closed_channel,
@@ -1652,37 +1655,8 @@ fp_on_top_of_fp(Cfg) ->
                     Props
                 end,
                 set_prop(height, InitHeight + LockPeriod + 1),
-                fun(#{trees            := Trees0,
-                      state            := S,
-                      channel_pubkey   := ChannelPubKey,
-                      initiator_pubkey := Initiator,
-                      responder_pubkey := Responder,
-                      contract_id      := ContractId,
-                      fake_account     := FakeAcc,
-                      solo_payload     := #{update := Update,
-                                            round  := FPRound}} = Props) ->
-                    FPRound = FPRound1, % assert expected round
-                    Reserve = maps:get(channel_reserve, Props, 0),
-                    Channel = aesc_test_utils:get_channel(ChannelPubKey, S),
-                    PoIHash = aesc_channels:state_hash(Channel),
-                    Trees = aesc_offchain_update:apply_on_trees(Update,
-                                                                aect_call_state_tree:prune_without_backend(Trees0),
-                                                                FPRound1,
-                                                                Reserve),
-                    PoIHash = aec_trees:hash(Trees),
-                    PoI = calc_poi([Initiator, Responder, FakeAcc],
-                                  [ContractId], Trees),
-                    PoIHash = aec_trees:poi_hash(PoI),
-                    Channel = aesc_test_utils:get_channel(ChannelPubKey, S),
-                    Props#{state_hash => PoIHash, poi => PoI,
-                          payload => <<>>,
-                          trees => Trees,
-                          addresses => [aec_id:create(account, Initiator),
-                                        aec_id:create(account, Responder),
-                                        aec_id:create(account, FakeAcc),
-                                        aec_id:create(contract, ContractId)
-                                        ]}
-                end,
+                create_poi_by_trees(),
+                set_prop(payload, <<>>),
                 force_progress_sequence(FPRound2, Forcer2)
                ])
         end,
@@ -2096,6 +2070,43 @@ fp_after_slash(Cfg) ->
     Test(10, 11, 20),
     %% force progress right after a close 
     Test(11, 20, 30),
+    ok.
+
+
+fp_call_onchain_objects(Cfg) ->
+    FPRound = 20,
+    LockPeriod = 10,
+    FPHeight0 = 20,
+    BogusOracle = list_to_binary(aect_utils:hex_bytes(<<42:32/unit:8>>)),
+    CallOnChain =
+        fun(Owner, Forcer) ->
+            IAmt0 = 30,
+            RAmt0 = 30,
+            ContractCreateRound = 10,
+            run(#{cfg => Cfg, initiator_amount => IAmt0,
+                              responder_amount => RAmt0,
+                  lock_period => LockPeriod,
+                  channel_reserve => 1},
+               [positive(fun create_channel_/2),
+                set_prop(contract_name, {"channel_on_chain_contract", 
+                                         <<"(", BogusOracle/binary, ")">>}),
+                set_prop(contract_function_call, {<<"place_bet">>, <<"\"domat\"">>}),
+                set_prop(height, FPHeight0),
+                create_contract_poi_and_payload(FPRound - 1, 
+                                                ContractCreateRound,
+                                                Owner),
+                force_progress_sequence(_Round = FPRound, Forcer),
+                set_prop(contract_name, {"channel_on_chain_contract", 
+                                         <<"(", BogusOracle/binary, ")">>}),
+                set_prop(contract_function_call, {<<"place_bet">>, <<"\"domat2\"">>}),
+                create_poi_by_trees(),
+                set_prop(payload, <<>>),
+                set_prop(height, FPHeight0 + LockPeriod + 1),
+                force_progress_sequence(FPRound + 1, Forcer)
+               ])
+        end,
+    [CallOnChain(Owner, Forcer) || Owner  <- ?ROLES,
+                                   Forcer <- ?ROLES],
     ok.
 
 % no one can post a force progress to a closed channel
@@ -2606,13 +2617,16 @@ create_contract_poi_and_payload(Round, ContractRound, Owner) ->
     create_contract_poi_and_payload(Round, ContractRound, Owner, #{}).
 
 create_contract_poi_and_payload(Round, ContractRound, Owner, Opts) ->
+
     fun(Props0) ->
+        {Contract, ContractInitProps} =
+            maps:get(contract_name, Props0, {"identity", <<"()">>}),
         run(Props0,
           [create_trees(),
            set_from(Owner, owner, owner_privkey),
            create_contract_in_trees(_Round    = ContractRound,
-                                    _Contract = "identity",
-                                    _InitArgs = <<"()">>,
+                                    _Contract = Contract,
+                                    _InitArgs = ContractInitProps,
                                     _Deposit  = 2),
            create_poi_by_trees(),
            set_prop(round, Round),
@@ -2669,13 +2683,16 @@ force_progress_sequence(Round, Forcer) ->
     Fee = 1,
     fun(Props0) ->
         DepositAmt = maps:get(call_deposit, Props0, 1),
+        {FunName, FunParams} = maps:get(contract_function_call, Props0,
+                                        {<<"main">>, <<"42">>}),
+        DepositAmt = maps:get(call_deposit, Props0, 1),
         run(Props0,
            [get_onchain_balances(before_force),
             set_from(Forcer),
             set_prop(round, Round),
             fun(#{contract_id := ContractId} = Props) ->
-                (create_contract_call_payload(ContractId, <<"main">>,
-                                              <<"42">>, DepositAmt))(Props)
+                (create_contract_call_payload(ContractId, FunName,
+                                              FunParams, DepositAmt))(Props)
             end,
             set_prop(fee, Fee),
             positive(fun force_progress_/2),
@@ -2705,7 +2722,9 @@ force_progress_sequence(Round, Forcer) ->
                                       TxHashContractPubkey),
                 Call = aect_test_utils:get_call(TxHashContractPubkey, CallId,
                                                 S),
-                524 = GasUsed = aect_call:gas_used(Call),
+                GasUsed = aect_call:gas_used(Call),
+                GasLimit = maps:get(gas_limit, Props, 1234567890),
+                ?assert(GasUsed < GasLimit),
                 GasPrice = aect_call:gas_price(Call),
                 ConsumedGas = GasUsed * GasPrice,
                 DeductedAmt = ConsumedGas + Fee,
@@ -2808,11 +2827,13 @@ create_contract_call_payload(ContractId, Fun, Args, Amount) ->
 create_contract_call_payload(Key, ContractId, Fun, Args, Amount) ->
     fun(#{from_pubkey       := From,
           round             := Round,
+          state             := State,
           trees             := Trees0} = Props) ->
         Contract = aect_test_utils:get_contract(ContractId, #{trees => Trees0}),
         Code = aect_contracts:code(Contract),
         CallData = aect_sophia:create_call(Code, Fun, Args),
         Reserve = maps:get(channel_reserve, Props, 0),
+        OnChainTrees = aesc_test_utils:trees(State), 
         Update =
             maps:get(solo_payload_update, Props,
                 aesc_offchain_update:op_call_contract(
@@ -2822,21 +2843,23 @@ create_contract_call_payload(Key, ContractId, Fun, Args, Amount) ->
                     [],
                     _GasPrice = maps:get(gas_price, Props, 1),
                     _GasLimit = maps:get(gas_limit, Props, 1234567890))),
-        StateHash =
+        {UpdatedTrees, StateHash} =
             case maps:get(fake_solo_state_hash, Props, none) of
                 none ->
                     Trees1 = aesc_offchain_update:apply_on_trees(Update,
                                                                 aect_call_state_tree:prune_without_backend(Trees0),
+                                                                OnChainTrees,
                                                                 Round,
                                                                 Reserve),
                     StateHash1 = aec_trees:hash(Trees1),
-                    StateHash1;
+                    {Trees1, StateHash1};
                 SH ->
-                    SH
+                    {Trees0, SH}
             end,
         Props#{Key => #{state_hash => StateHash,
                         round      => Round,
-                        update     => Update}}
+                        update     => Update},
+               trees => UpdatedTrees}
     end.
 
 create_trees() ->
@@ -2858,6 +2881,7 @@ create_trees() ->
 
 create_contract_in_trees(CreationRound, ContractName, InitArg, Deposit) ->
     fun(#{trees := Trees0,
+          state := State,
           owner := Owner} = Props) ->
         ContractString = aeso_test_utils:read_contract(ContractName),
         BinCode = aeso_compiler:from_string(ContractString, []),
@@ -2868,8 +2892,9 @@ create_contract_in_trees(CreationRound, ContractName, InitArg, Deposit) ->
                                                       Deposit,
                                                       CallData),
         Reserve = maps:get(channel_reserve, Props, 0),
-        Trees = aesc_offchain_update:apply_on_trees(Update, Trees0, CreationRound,
-                                                    Reserve),
+        OnChainTrees = aesc_test_utils:trees(State), 
+        Trees = aesc_offchain_update:apply_on_trees(Update, Trees0, OnChainTrees,
+                                                    CreationRound, Reserve),
         ContractId = aect_contracts:compute_contract_pubkey(Owner, CreationRound),
         Props#{trees => Trees, contract_id => ContractId}
     end.

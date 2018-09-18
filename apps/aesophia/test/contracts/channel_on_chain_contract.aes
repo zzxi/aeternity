@@ -1,0 +1,38 @@
+contract ChannelOnChainContract =
+
+//  type query_t  = string
+//  type answer_t = int
+
+  record state = { oracle        : address,
+                   tmp           : string,
+                   bets          : map(string, address)
+                   }
+
+
+  public function init(oracle: address) : state =
+    { oracle = oracle,
+      tmp    = "TMP",
+      bets   = {}
+      }
+
+  private function abort() =
+    switch(0) 1 => ()
+
+  public function set_tmp(tmp: string) =
+      put(state{tmp = tmp})
+
+  public stateful function place_bet(answer: string) = 
+    switch(Map.lookup(answer, state.bets))
+      None         =>
+        put(state{ bets = state.bets{[answer] = Call.caller}})
+      Some(_value) => abort()
+
+
+/*
+
+  public function resolve(q: query_id) =
+      let result = Oracle.get_answer(state.oracle, q)
+      switch(Map.lookup(result, state.bets))
+        Some(winner) => Chain.spend(winner, Contract.balance)
+        None         => abort() // no correct bet, act fast! 
+*/
