@@ -312,7 +312,8 @@ add_callcreates(#{ data := _
 
 add_trace(T, State) ->
     Trace = trace(State),
-    maps:put(trace, Trace ++ [T], State).
+    maps:put(trace, Trace ++
+                 [{T,stack(State),mem(State)}], State).
 
 trace_format(String, Argument, State) ->
     Account   = aevm_eeevm_state:address(State) band 65535,
