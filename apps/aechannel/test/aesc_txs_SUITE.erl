@@ -2077,7 +2077,44 @@ fp_call_onchain_objects(Cfg) ->
     FPRound = 20,
     LockPeriod = 10,
     FPHeight0 = 20,
-    BogusOracle = list_to_binary(aect_utils:hex_bytes(<<42:32/unit:8>>)),
+    HexEncode = fun(L) -> list_to_binary(aect_utils:hex_bytes(L)) end,
+    CallContract =
+        fun(Forcer, Fun, Args) ->
+            fun(Props0) ->
+                #{channel_pubkey := ChannelPubKey, state := S} = Props0,
+                Channel = aesc_test_utils:get_channel(ChannelPubKey, S),
+                Round = aesc_channels:round(Channel),
+                run(Props0,
+                   [set_prop(contract_function_call, {Fun, Args}),
+                    create_poi_by_trees(),
+                    set_prop(payload, <<>>),
+                    fun(#{height := H0} = Props) ->
+                        Props#{height => H0 + FPHeight0 + LockPeriod + 1}
+                    end,
+                    force_progress_sequence(Round + 1, Forcer)])
+            end
+        end,
+    AssertLastCallResult =
+        fun(Result) ->
+            fun(#{state := S,
+                  signed_force_progress := SignedForceProgressTx,
+                  solo_payload := #{update := Update,
+                                    round  := Round}} = Props) ->
+                {_ContractId, Caller} = aesc_offchain_update:extract_call(Update),
+                TxHashContractPubkey = aesc_utils:tx_hash_to_contract_pubkey(
+                                      aetx_sign:hash(SignedForceProgressTx)),
+                CallId = aect_call:id(Caller,
+                                      Round,
+                                      TxHashContractPubkey),
+                Call = aect_test_utils:get_call(TxHashContractPubkey, CallId,
+                                                S),
+                EncRValue = aect_call:return_value(Call),
+                {ok, Result} = aeso_data:from_binary(string, EncRValue),
+                Props
+            end
+        end,
+    Answer = <<"oh, yes">>,
+    OResponse = aeso_data:to_binary(Answer, 0),
     CallOnChain =
         fun(Owner, Forcer) ->
             IAmt0 = 30,
@@ -2088,21 +2125,64 @@ fp_call_onchain_objects(Cfg) ->
                   lock_period => LockPeriod,
                   channel_reserve => 1},
                [positive(fun create_channel_/2),
-                set_prop(contract_name, {"channel_on_chain_contract", 
-                                         <<"(", BogusOracle/binary, ")">>}),
-                set_prop(contract_function_call, {<<"place_bet">>, <<"\"domat\"">>}),
                 set_prop(height, FPHeight0),
+
+                % create oracle
+                register_new_oracle(<<"string()">>,
+                                    aeso_data:to_binary(string, 0)),
+
+                % create off-chain contract
+                fun(#{oracle := Oracle} = Props) ->
+                    EncodedOracleId = HexEncode(Oracle),
+                    Props#{contract_name => {"channel_on_chain_contract", 
+                                         <<"(", EncodedOracleId/binary, ")">>}}
+                end,
+
+                % place some calls to that contract
+                set_prop(contract_function_call, {<<"place_bet">>, <<"\"Lorem\"">>}),
                 create_contract_poi_and_payload(FPRound - 1, 
                                                 ContractCreateRound,
                                                 Owner),
                 force_progress_sequence(_Round = FPRound, Forcer),
-                set_prop(contract_name, {"channel_on_chain_contract", 
-                                         <<"(", BogusOracle/binary, ")">>}),
-                set_prop(contract_function_call, {<<"place_bet">>, <<"\"domat2\"">>}),
-                create_poi_by_trees(),
-                set_prop(payload, <<>>),
-                set_prop(height, FPHeight0 + LockPeriod + 1),
-                force_progress_sequence(FPRound + 1, Forcer)
+                CallContract(Forcer, <<"place_bet">>, <<"\"Ipsum\"">>),
+
+                % try resolving a contract with wrong query id
+                fun(Props) ->
+                    EncodedQueryId = HexEncode(<<1234:42/unit:8>>),
+                    (CallContract(Forcer, <<"resolve">>,
+                                         <<"(", EncodedQueryId/binary,
+                                           ")">>))(Props)
+                end,
+                AssertLastCallResult(<<"no response">>),
+
+                % oracle query and answer
+                oracle_query(<<"To be, or not to be?">>, _ResponseTTL = 100),
+                oracle_response(OResponse),
+                fun(#{state := S, oracle := Oracle, query_id := QueryId} = Props) ->
+                    OTrees = aec_trees:oracles(aesc_test_utils:trees(S)),
+                    Q = aeo_state_tree:get_query(Oracle, QueryId, OTrees),
+                    OResponse = aeo_query:response(Q),
+                    Props
+                end,
+
+                % there is currently no bet for the correct answer, try anyway
+                fun(#{query_id := QueryId} = Props) ->
+                    EncodedQueryId = HexEncode(QueryId),
+                    (CallContract(Forcer, <<"resolve">>,
+                                         <<"(", EncodedQueryId/binary,
+                                           ")">>))(Props)
+                end,
+                AssertLastCallResult(<<"no winning bet">>),
+
+                % place a winnning bet
+                CallContract(Forcer, <<"place_bet">>, <<"\"", Answer/binary,"\"">>),
+                fun(#{query_id := QueryId} = Props) ->
+                    EncodedQueryId = HexEncode(QueryId),
+                    (CallContract(Forcer, <<"resolve">>,
+                                         <<"(", EncodedQueryId/binary,
+                                           ")">>))(Props)
+                end,
+                AssertLastCallResult(<<"ok">>)
                ])
         end,
     [CallOnChain(Owner, Forcer) || Owner  <- ?ROLES,
@@ -3429,3 +3509,55 @@ test_not_participant(Cfg, Fun, InitProps) ->
          end,
          negative(Fun, {error, account_not_peer})]),
     ok.
+
+register_new_oracle(QFormat, RFormat) ->
+    fun(Props0) ->
+        run(Props0,
+           [fun(#{state := S0} = Props) ->
+                {NewAcc, S} = aesc_test_utils:setup_new_account(S0),
+                S1 = aesc_test_utils:set_account_balance(NewAcc, 1000, S),
+                Props#{state => S1, oracle => NewAcc}
+            end,
+            fun(#{state := S, oracle := Oracle} = Props) ->
+                RegTx = aeo_test_utils:register_tx(Oracle,
+                                                   #{query_format => QFormat,
+                                                     response_format => RFormat},
+                                                   S),
+                PrivKey = aesc_test_utils:priv_key(Oracle, S),
+                SignedTx = aec_test_utils:sign_tx(RegTx, [PrivKey]),
+                apply_on_trees_(Props, SignedTx, S, positive)
+            end
+           ])
+    end.
+
+oracle_query(Question, ResponseTTL) ->
+    fun(Props0) ->
+        run(Props0,
+           [fun(#{state := S, oracle := Oracle} = Props) ->
+                QueryTx = aeo_test_utils:query_tx(Oracle,
+                                                  aec_id:create(oracle, Oracle),% oracle is asking
+                                                  #{query => Question,
+                                                    response_ttl => {delta, ResponseTTL}},
+                                                  S),
+                {_, Tx} = aetx:specialize_type(QueryTx),
+                QueryId = aeo_query_tx:query_id(Tx),
+                PrivKey = aesc_test_utils:priv_key(Oracle, S),
+                SignedTx = aec_test_utils:sign_tx(QueryTx, [PrivKey]),
+                Props1 = apply_on_trees_(Props, SignedTx, S, positive),
+                Props1#{query_id => QueryId}
+            end
+           ])
+    end.
+
+oracle_response(Response) ->
+    fun(Props0) ->
+        run(Props0,
+           [fun(#{state := S, oracle := Oracle, query_id := QueryId} = Props) ->
+                ResponseTx = aeo_test_utils:response_tx(Oracle, QueryId,
+                                                        Response, S),
+                PrivKey = aesc_test_utils:priv_key(Oracle, S),
+                SignedTx = aec_test_utils:sign_tx(ResponseTx, [PrivKey]),
+                apply_on_trees_(Props, SignedTx, S, positive)
+            end
+           ])
+    end.

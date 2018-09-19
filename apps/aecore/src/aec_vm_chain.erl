@@ -97,9 +97,9 @@ set_state_onchain(#state{is_onchain = false} = State) ->
 
 %% @doc Push another state context on top of currently existing ones
 -spec push_state_context(chain_state(), chain_state()) -> chain_state().
-push_state_context(#state{is_onchain = false} = State, InnerState) ->
-    State#state{is_onchain = true,
-                inner_state = InnerState}.
+push_state_context(#state{is_onchain = false, inner_state = ?NO_INNER_STATE} = State,
+                   InnerState) ->
+    State#state{inner_state = InnerState}.
 
 %% @doc Get the state trees from a state.
 -spec get_trees(chain_state()) -> aec_trees:trees().
@@ -517,7 +517,7 @@ get_from_state_or_inner(Fun, NotFoundValue, State) ->
             case Fun(State#state.trees) of
                 NotFoundValue ->
                     get_from_state_or_inner(Fun, NotFoundValue, State#state.inner_state);
-                ChannelBalance -> ChannelBalance
+                Val -> Val
             end
     end.
 

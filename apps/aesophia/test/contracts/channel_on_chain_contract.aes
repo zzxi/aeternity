@@ -1,15 +1,17 @@
 contract ChannelOnChainContract =
 
-//  type query_t  = string
-//  type answer_t = int
+  type query_t  = string
+  type answer_t = string
+  type oracle_id = oracle(query_t, answer_t)
+  type query_id = oracle_query(query_t, answer_t)
 
-  record state = { oracle        : address,
+  record state = { oracle        : oracle_id,
                    tmp           : string,
                    bets          : map(string, address)
                    }
 
 
-  public function init(oracle: address) : state =
+  public function init(oracle: oracle_id) : state =
     { oracle = oracle,
       tmp    = "TMP",
       bets   = {}
@@ -27,12 +29,14 @@ contract ChannelOnChainContract =
         put(state{ bets = state.bets{[answer] = Call.caller}})
       Some(_value) => abort()
 
-
-/*
-
-  public function resolve(q: query_id) =
-      let result = Oracle.get_answer(state.oracle, q)
-      switch(Map.lookup(result, state.bets))
-        Some(winner) => Chain.spend(winner, Contract.balance)
-        None         => abort() // no correct bet, act fast! 
-*/
+  public stateful function resolve(q: query_id) =
+    switch(Oracle.get_answer(state.oracle, q))
+      None         =>
+        "no response"
+      Some(result) => 
+        switch(Map.lookup(result, state.bets))
+          None         =>
+            "no winning bet"
+          Some(winner) =>
+            Chain.spend(winner, Contract.balance)
+            "ok"
