@@ -2080,8 +2080,11 @@ fp_use_onchain_oracle(Cfg) ->
     LockPeriod = 10,
     FPHeight0 = 20,
     HexEncode = fun(L) -> list_to_binary(aect_utils:hex_bytes(L)) end,
+    Question = <<"To be, or not to be?">>,
+    OQuestion = aeso_data:to_binary(Question, 0),
     Answer = <<"oh, yes">>,
     OResponse = aeso_data:to_binary(Answer, 0),
+    QueryFee = 2,
     CallOnChain =
         fun(Owner, Forcer) ->
             IAmt0 = 30,
@@ -2096,7 +2099,8 @@ fp_use_onchain_oracle(Cfg) ->
 
                 % create oracle
                 register_new_oracle(aeso_data:to_binary(string, 0),
-                                    aeso_data:to_binary(string, 0)),
+                                    aeso_data:to_binary(string, 0),
+                                    QueryFee),
 
                 % create off-chain contract
                 create_trees(),
@@ -2125,7 +2129,7 @@ fp_use_onchain_oracle(Cfg) ->
                 assert_last_channel_result(<<"no response">>, string),
 
                 % oracle query and answer
-                oracle_query(<<"To be, or not to be?">>, _ResponseTTL = 100),
+                oracle_query(OQuestion, _ResponseTTL = 100),
                 oracle_response(OResponse),
                 fun(#{state := S, oracle := Oracle, query_id := QueryId} = Props) ->
                     OTrees = aec_trees:oracles(aesc_test_utils:trees(S)),
@@ -2152,7 +2156,26 @@ fp_use_onchain_oracle(Cfg) ->
                                          <<"(", EncodedQueryId/binary,
                                            ")">>, LockPeriod))(Props)
                 end,
-                assert_last_channel_result(<<"ok">>, string)
+                assert_last_channel_result(<<"ok">>, string),
+
+                % verify that Oracle.get_question works
+                fun(#{query_id := QueryId} = Props) ->
+                    EncodedQueryId = HexEncode(QueryId),
+                    (force_call_contract(Forcer, <<"get_question">>,
+                                         <<"(", EncodedQueryId/binary,
+                                           ")">>, LockPeriod))(Props)
+                end,
+                assert_last_channel_result(Question, string)%,
+
+                % verify that Oracle.query_fee works
+                % TODO: decode an integer output :)
+                %fun(#{query_id := QueryId} = Props) ->
+                %    EncodedQueryId = HexEncode(QueryId),
+                %    (force_call_contract(Forcer, <<"query_fee">>,
+                %                         <<"(", EncodedQueryId/binary,
+                %                           ")">>, LockPeriod))(Props)
+                %end,
+                %assert_last_channel_result(QueryFee, int)
                ])
         end,
     [CallOnChain(Owner, Forcer) || Owner  <- ?ROLES,
@@ -3533,7 +3556,7 @@ test_not_participant(Cfg, Fun, InitProps) ->
          negative(Fun, {error, account_not_peer})]),
     ok.
 
-register_new_oracle(QFormat, RFormat) ->
+register_new_oracle(QFormat, RFormat, QueryFee) ->
     fun(Props0) ->
         run(Props0,
            [fun(#{state := S0} = Props) ->
@@ -3544,6 +3567,7 @@ register_new_oracle(QFormat, RFormat) ->
             fun(#{state := S, oracle := Oracle} = Props) ->
                 RegTx = aeo_test_utils:register_tx(Oracle,
                                                    #{query_format => QFormat,
+                                                     query_fee => QueryFee,
                                                      response_format => RFormat},
                                                    S),
                 PrivKey = aesc_test_utils:priv_key(Oracle, S),
