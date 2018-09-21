@@ -1,4 +1,4 @@
-contract ChannelOnChainContract =
+contract ChannelOnChainContractOracle =
 
   type query_t  = string
   type answer_t = string

@@ -125,7 +125,8 @@
          % already closing
          fp_after_solo_close/1,
          fp_after_slash/1,
-         fp_call_onchain_objects/1
+         fp_use_onchain_oracle/1,
+         fp_use_onchain_name_resolution/1
         ]).
 
 % negative force progress
@@ -280,7 +281,8 @@ groups() ->
        fp_after_solo_close,
        fp_after_slash,
        % contract referring to on-chain objects
-       fp_call_onchain_objects
+       fp_use_onchain_oracle,
+       fp_use_onchain_name_resolution
       ]},
      {force_progress_negative, [sequence],
       [fp_closed_channel,
@@ -2073,46 +2075,11 @@ fp_after_slash(Cfg) ->
     ok.
 
 
-fp_call_onchain_objects(Cfg) ->
+fp_use_onchain_oracle(Cfg) ->
     FPRound = 20,
     LockPeriod = 10,
     FPHeight0 = 20,
     HexEncode = fun(L) -> list_to_binary(aect_utils:hex_bytes(L)) end,
-    CallContract =
-        fun(Forcer, Fun, Args) ->
-            fun(Props0) ->
-                #{channel_pubkey := ChannelPubKey, state := S} = Props0,
-                Channel = aesc_test_utils:get_channel(ChannelPubKey, S),
-                Round = aesc_channels:round(Channel),
-                run(Props0,
-                   [set_prop(contract_function_call, {Fun, Args}),
-                    create_poi_by_trees(),
-                    set_prop(payload, <<>>),
-                    fun(#{height := H0} = Props) ->
-                        Props#{height => H0 + FPHeight0 + LockPeriod + 1}
-                    end,
-                    force_progress_sequence(Round + 1, Forcer)])
-            end
-        end,
-    AssertLastCallResult =
-        fun(Result) ->
-            fun(#{state := S,
-                  signed_force_progress := SignedForceProgressTx,
-                  solo_payload := #{update := Update,
-                                    round  := Round}} = Props) ->
-                {_ContractId, Caller} = aesc_offchain_update:extract_call(Update),
-                TxHashContractPubkey = aesc_utils:tx_hash_to_contract_pubkey(
-                                      aetx_sign:hash(SignedForceProgressTx)),
-                CallId = aect_call:id(Caller,
-                                      Round,
-                                      TxHashContractPubkey),
-                Call = aect_test_utils:get_call(TxHashContractPubkey, CallId,
-                                                S),
-                EncRValue = aect_call:return_value(Call),
-                {ok, Result} = aeso_data:from_binary(string, EncRValue),
-                Props
-            end
-        end,
     Answer = <<"oh, yes">>,
     OResponse = aeso_data:to_binary(Answer, 0),
     CallOnChain =
@@ -2128,32 +2095,34 @@ fp_call_onchain_objects(Cfg) ->
                 set_prop(height, FPHeight0),
 
                 % create oracle
-                register_new_oracle(<<"string()">>,
+                register_new_oracle(aeso_data:to_binary(string, 0),
                                     aeso_data:to_binary(string, 0)),
 
                 % create off-chain contract
+                create_trees(),
+                set_from(Owner, owner, owner_privkey),
                 fun(#{oracle := Oracle} = Props) ->
                     EncodedOracleId = HexEncode(Oracle),
-                    Props#{contract_name => {"channel_on_chain_contract", 
-                                         <<"(", EncodedOracleId/binary, ")">>}}
+                    (create_contract_in_trees(_Round    = ContractCreateRound,
+                                             _Contract = "channel_on_chain_contract_oracle",
+                                             _InitArgs = <<"(", EncodedOracleId/binary, ")">>,
+                                             _Deposit  = 2))(Props)
                 end,
 
                 % place some calls to that contract
-                set_prop(contract_function_call, {<<"place_bet">>, <<"\"Lorem\"">>}),
-                create_contract_poi_and_payload(FPRound - 1, 
-                                                ContractCreateRound,
-                                                Owner),
-                force_progress_sequence(_Round = FPRound, Forcer),
-                CallContract(Forcer, <<"place_bet">>, <<"\"Ipsum\"">>),
+                force_call_contract_first(Forcer, <<"place_bet">>, <<"\"Lorem\"">>,
+                                          LockPeriod, FPRound),
+                force_call_contract(Forcer, <<"place_bet">>, <<"\"Ipsum\"">>,
+                                    LockPeriod),
 
                 % try resolving a contract with wrong query id
                 fun(Props) ->
                     EncodedQueryId = HexEncode(<<1234:42/unit:8>>),
-                    (CallContract(Forcer, <<"resolve">>,
+                    (force_call_contract(Forcer, <<"resolve">>,
                                          <<"(", EncodedQueryId/binary,
-                                           ")">>))(Props)
+                                           ")">>, LockPeriod))(Props)
                 end,
-                AssertLastCallResult(<<"no response">>),
+                assert_last_channel_result(<<"no response">>, string),
 
                 % oracle query and answer
                 oracle_query(<<"To be, or not to be?">>, _ResponseTTL = 100),
@@ -2168,21 +2137,56 @@ fp_call_onchain_objects(Cfg) ->
                 % there is currently no bet for the correct answer, try anyway
                 fun(#{query_id := QueryId} = Props) ->
                     EncodedQueryId = HexEncode(QueryId),
-                    (CallContract(Forcer, <<"resolve">>,
+                    (force_call_contract(Forcer, <<"resolve">>,
                                          <<"(", EncodedQueryId/binary,
-                                           ")">>))(Props)
+                                           ")">>, LockPeriod))(Props)
                 end,
-                AssertLastCallResult(<<"no winning bet">>),
+                assert_last_channel_result(<<"no winning bet">>, string),
 
                 % place a winnning bet
-                CallContract(Forcer, <<"place_bet">>, <<"\"", Answer/binary,"\"">>),
+                force_call_contract(Forcer, <<"place_bet">>, <<"\"", Answer/binary,"\"">>,
+                                    LockPeriod),
                 fun(#{query_id := QueryId} = Props) ->
                     EncodedQueryId = HexEncode(QueryId),
-                    (CallContract(Forcer, <<"resolve">>,
+                    (force_call_contract(Forcer, <<"resolve">>,
                                          <<"(", EncodedQueryId/binary,
-                                           ")">>))(Props)
+                                           ")">>, LockPeriod))(Props)
                 end,
-                AssertLastCallResult(<<"ok">>)
+                assert_last_channel_result(<<"ok">>, string)
+               ])
+        end,
+    [CallOnChain(Owner, Forcer) || Owner  <- ?ROLES,
+                                   Forcer <- ?ROLES],
+    ok.
+
+fp_use_onchain_name_resolution(Cfg) ->
+    FPRound = 20,
+    LockPeriod = 10,
+    FPHeight0 = 20,
+    HexEncode = fun(L) -> list_to_binary(aect_utils:hex_bytes(L)) end,
+    CallOnChain =
+        fun(Owner, Forcer) ->
+            IAmt0 = 30,
+            RAmt0 = 30,
+            ContractCreateRound = 10,
+            run(#{cfg => Cfg, initiator_amount => IAmt0,
+                              responder_amount => RAmt0,
+                  lock_period => LockPeriod,
+                  channel_reserve => 1},
+               [positive(fun create_channel_/2),
+                set_prop(height, FPHeight0),
+
+                % create off-chain contract
+                create_trees(),
+                set_from(Owner, owner, owner_privkey),
+                create_contract_in_trees(_Round    = ContractCreateRound,
+                                         _Contract = "channel_on_chain_contract_name_resolution",
+                                         _InitArgs = <<"()">>,
+                                         _Deposit  = 2),
+                force_call_contract_first(Forcer, <<"can_resolve">>,
+                                          <<"(\"name\",\"oracle\")">>,
+                                          LockPeriod, FPRound),
+                assert_last_channel_result(false, bool)
                ])
         end,
     [CallOnChain(Owner, Forcer) || Owner  <- ?ROLES,
@@ -3561,3 +3565,64 @@ oracle_response(Response) ->
             end
            ])
     end.
+
+%% provide payload
+force_call_contract_first(Forcer, Fun, Args, LockPeriod, Round) ->
+    fun(Props0) ->
+        run(Props0,
+           [fun(#{height := H0} = Props) ->
+                Props#{height => H0 + LockPeriod + 1}
+            end,
+            set_prop(round, Round - 1),
+            set_from(Forcer),
+            create_poi_by_trees(),
+            create_payload(),
+            set_prop(round, Round),
+            fun(#{contract_id := ContractId} = Props) ->
+                (create_contract_call_payload(ContractId, Fun,
+                                              Args, 1))(Props)
+            end,
+            set_prop(fee, 1),
+            positive(fun force_progress_/2)
+            ])
+    end.
+
+%% build on top of on-chain payload
+force_call_contract(Forcer, Fun, Args, LockPeriod) ->
+    fun(Props0) ->
+        #{channel_pubkey := ChannelPubKey, state := S} = Props0,
+        Channel = aesc_test_utils:get_channel(ChannelPubKey, S),
+        Round = aesc_channels:round(Channel),
+        (force_call_contract(Forcer, Fun, Args, LockPeriod, Round + 1))(Props0)
+    end.
+
+force_call_contract(Forcer, Fun, Args, LockPeriod, Round) ->
+    fun(Props0) ->
+        run(Props0,
+            [set_prop(contract_function_call, {Fun, Args}),
+            create_poi_by_trees(),
+            set_prop(payload, <<>>),
+            fun(#{height := H0} = Props) ->
+                Props#{height => H0 + LockPeriod + 1}
+            end,
+            force_progress_sequence(Round, Forcer)])
+    end.
+
+assert_last_channel_result(Result, Type) ->
+    fun(#{state := S,
+          signed_force_progress := SignedForceProgressTx,
+          solo_payload := #{update := Update,
+                            round  := Round}} = Props) ->
+        {_ContractId, Caller} = aesc_offchain_update:extract_call(Update),
+        TxHashContractPubkey = aesc_utils:tx_hash_to_contract_pubkey(
+                              aetx_sign:hash(SignedForceProgressTx)),
+        CallId = aect_call:id(Caller,
+                              Round,
+                              TxHashContractPubkey),
+        Call = aect_test_utils:get_call(TxHashContractPubkey, CallId,
+                                        S),
+        EncRValue = aect_call:return_value(Call),
+        {ok, Result} = aeso_data:from_binary(Type, EncRValue),
+        Props
+    end.
+
