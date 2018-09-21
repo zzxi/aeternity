@@ -2164,6 +2164,18 @@ fp_use_onchain_name_resolution(Cfg) ->
     LockPeriod = 10,
     FPHeight0 = 20,
     HexEncode = fun(L) -> list_to_binary(aect_utils:hex_bytes(L)) end,
+    Name = <<"lorem.test">>,
+    ForceCallCheckName =
+        fun(Forcer, K, Found) when is_binary(K) andalso is_boolean(Found) ->
+            fun(Props) ->
+              run(Props,
+                  [force_call_contract(Forcer, <<"can_resolve">>,
+                                    <<"(\"", Name/binary, "\",\"", K/binary, "\")">>,
+                                    LockPeriod),
+                  assert_last_channel_result(Found, bool)])
+            end
+        end,
+
     CallOnChain =
         fun(Owner, Forcer) ->
             IAmt0 = 30,
@@ -2184,9 +2196,16 @@ fp_use_onchain_name_resolution(Cfg) ->
                                          _InitArgs = <<"()">>,
                                          _Deposit  = 2),
                 force_call_contract_first(Forcer, <<"can_resolve">>,
-                                          <<"(\"name\",\"oracle\")">>,
+                                          <<"(\"", Name/binary, "\",\"oracle\")">>,
                                           LockPeriod, FPRound),
-                assert_last_channel_result(false, bool)
+                assert_last_channel_result(false, bool),
+                register_name(Name,
+                              [{<<"account_pubkey">>, aec_id:create(account, <<1:256>>)},
+                               {<<"oracle">>, aec_id:create(oracle, <<2:256>>)},
+                               {<<"unexpected_key">>, aec_id:create(account, <<3:256>>)}]),
+                ForceCallCheckName(Forcer, <<"oracle">>, true),
+                ForceCallCheckName(Forcer, <<"unexpected_key">>, true),
+                ForceCallCheckName(Forcer, <<"no_such_pointer">>, false)
                ])
         end,
     [CallOnChain(Owner, Forcer) || Owner  <- ?ROLES,
@@ -3561,6 +3580,56 @@ oracle_response(Response) ->
                                                         Response, S),
                 PrivKey = aesc_test_utils:priv_key(Oracle, S),
                 SignedTx = aec_test_utils:sign_tx(ResponseTx, [PrivKey]),
+                apply_on_trees_(Props, SignedTx, S, positive)
+            end
+           ])
+    end.
+
+register_name(Name, Pointers0) ->
+    NameSalt = rand:uniform(10000),
+    fun(Props0) ->
+        run(Props0,
+           [% create dummy account to hold the name
+            fun(#{state := S0} = Props) ->
+                {NewAcc, S} = aesc_test_utils:setup_new_account(S0),
+                S1 = aesc_test_utils:set_account_balance(NewAcc, 1000, S),
+                Props#{state => S1, name_owner => NewAcc}
+            end,
+            % preclaim
+            fun(#{state := S, name_owner := NameOwner} = Props) ->
+                {ok, NameAscii} = aens_utils:to_ascii(Name),
+                CHash = aens_hash:commitment_hash(NameAscii, NameSalt),
+                TxSpec = aens_test_utils:preclaim_tx_spec(NameOwner, CHash, S),
+                {ok, Tx} = aens_preclaim_tx:new(TxSpec),
+                PrivKey = aesc_test_utils:priv_key(NameOwner, S),
+                SignedTx = aec_test_utils:sign_tx(Tx, PrivKey),
+                apply_on_trees_(Props, SignedTx, S, positive)
+            end,
+            % claim
+            fun(#{state := S, name_owner := NameOwner, height := Height0} = Props) ->
+                PrivKey = aesc_test_utils:priv_key(NameOwner, S),
+                Delta = aec_governance:name_claim_preclaim_delta(),
+                TxSpec = aens_test_utils:claim_tx_spec(NameOwner, Name, NameSalt, S),
+                {ok, Tx} = aens_claim_tx:new(TxSpec),
+                SignedTx = aec_test_utils:sign_tx(Tx, PrivKey),
+                apply_on_trees_(Props#{height := Height0 + Delta}, SignedTx, S, positive)
+            end,
+            % update to set pointers
+            fun(#{state := S, name_owner := NameOwner} = Props) ->
+                PrivKey = aesc_test_utils:priv_key(NameOwner, S),
+                {ok, NameAscii} = aens_utils:to_ascii(Name),
+                NHash = aens_hash:name_hash(NameAscii),
+                Pointers =
+                    lists:map(
+                        fun({PointerName, Value}) ->
+                            aens_pointer:new(PointerName, Value)
+                        end,
+                        Pointers0),
+                NameTTL  = 40000,
+                TxSpec = aens_test_utils:update_tx_spec(
+                           NameOwner, NHash, #{pointers => Pointers, name_ttl => NameTTL}, S),
+                {ok, Tx} = aens_update_tx:new(TxSpec),
+                SignedTx = aec_test_utils:sign_tx(Tx, PrivKey),
                 apply_on_trees_(Props, SignedTx, S, positive)
             end
            ])
