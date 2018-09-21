@@ -1,10 +1,11 @@
 #!/usr/bin/env escript
 %% -*- erlang -*-
-%%! -smp enable -sname complile_test_contract -mnesia debug verbose -pa ../_build/default/lib/aesophia/ebin/
+%%! -smp enable -sname complile_test_contract -mnesia debug verbose
 
-main([TestName]) ->
-    TestDir = "apps/aesophia/test/contracts/",
-    case file:read_file(lists:concat(["../", TestDir,
+main([TestName, Ebin]) ->
+    code:add_patha(Ebin),
+    TestDir = "../test/contracts/",
+    case file:read_file(lists:concat([TestDir,
                                       TestName, ".aes"])) of
         {ok, Bin} ->
             C = binary_to_list(Bin),
