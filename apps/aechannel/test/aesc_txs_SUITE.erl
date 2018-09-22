@@ -2165,17 +2165,16 @@ fp_use_onchain_oracle(Cfg) ->
                                          <<"(", EncodedQueryId/binary,
                                            ")">>, LockPeriod))(Props)
                 end,
-                assert_last_channel_result(Question, string)%,
+                assert_last_channel_result(Question, string),
 
                 % verify that Oracle.query_fee works
-                % TODO: decode an integer output :)
-                %fun(#{query_id := QueryId} = Props) ->
-                %    EncodedQueryId = HexEncode(QueryId),
-                %    (force_call_contract(Forcer, <<"query_fee">>,
-                %                         <<"(", EncodedQueryId/binary,
-                %                           ")">>, LockPeriod))(Props)
-                %end,
-                %assert_last_channel_result(QueryFee, int)
+                fun(#{query_id := QueryId} = Props) ->
+                    EncodedQueryId = HexEncode(QueryId),
+                    (force_call_contract(Forcer, <<"query_fee">>,
+                                         <<"(", EncodedQueryId/binary,
+                                           ")">>, LockPeriod))(Props)
+                end,
+                assert_last_channel_result(QueryFee, word)
                ])
         end,
     [CallOnChain(Owner, Forcer) || Owner  <- ?ROLES,
