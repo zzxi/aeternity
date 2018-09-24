@@ -2109,7 +2109,7 @@ fp_use_onchain_oracle(Cfg) ->
                     EncodedOracleId = HexEncode(Oracle),
                     (create_contract_in_trees(_Round    = ContractCreateRound,
                                              _Contract = "channel_on_chain_contract_oracle",
-                                             _InitArgs = <<"(", EncodedOracleId/binary, ")">>,
+                                             _InitArgs = <<"(",EncodedOracleId/binary, ", \"", Question/binary, "\")">>,
                                              _Deposit  = 2))(Props)
                 end,
 
@@ -2185,7 +2185,6 @@ fp_use_onchain_name_resolution(Cfg) ->
     FPRound = 20,
     LockPeriod = 10,
     FPHeight0 = 20,
-    HexEncode = fun(L) -> list_to_binary(aect_utils:hex_bytes(L)) end,
     Name = <<"lorem.test">>,
     ForceCallCheckName =
         fun(Forcer, K, Found) when is_binary(K) andalso is_boolean(Found) ->
