@@ -213,7 +213,8 @@
     sc_ws_withdraw_initiator_and_close/1,
     sc_ws_withdraw_responder_and_close/1,
     sc_ws_contracts/1,
-    sc_ws_oracle_contract/1
+    sc_ws_oracle_contract/1,
+    sc_ws_nameservice_contract/1
    ]).
 
 
@@ -544,7 +545,11 @@ groups() ->
        % both can refer on-chain objects
        sc_ws_open,
        sc_ws_update,
-       sc_ws_oracle_contract
+       sc_ws_oracle_contract,
+       % both can refer on-chain objects
+       sc_ws_open,
+       sc_ws_update,
+       sc_ws_nameservice_contract
       ]}
     ].
 
@@ -4087,17 +4092,32 @@ sc_ws_oracle_contract(Config) ->
     ok = ?WS:register_test_for_channel_events(IConnPid, [sign, info, get, error]),
     ok = ?WS:register_test_for_channel_events(RConnPid, [sign, info, get, error]),
 
-    sc_ws_oracle_contract_(initiator, Config),
-    sc_ws_oracle_contract_(responder, Config),
-
-
+    [sc_ws_contract_generic(Role, fun sc_ws_oracle_contract_/7, Config)
+        || Role <- [initiator, responder]],
 
     % cleanup
     ok = ?WS:stop(IConnPid),
     ok = ?WS:stop(RConnPid),
     ok.
 
-sc_ws_oracle_contract_(Origin, Config) ->
+sc_ws_nameservice_contract(Config) ->
+
+    {sc_ws_update, ConfigList} = ?config(saved_config, Config),
+    #{initiator := IConnPid, responder := RConnPid} =
+        proplists:get_value(channel_clients, ConfigList),
+
+    ok = ?WS:register_test_for_channel_events(IConnPid, [sign, info, get, error]),
+    ok = ?WS:register_test_for_channel_events(RConnPid, [sign, info, get, error]),
+
+    [sc_ws_contract_generic(Role, fun sc_ws_oracle_contract_/7, Config)
+        || Role <- [initiator, responder]],
+
+    % cleanup
+    ok = ?WS:stop(IConnPid),
+    ok = ?WS:stop(RConnPid),
+    ok.
+
+sc_ws_contract_generic(Origin, Fun, Config) ->
     %% get the infrastructure for users going 
     {sc_ws_update, ConfigList} = ?config(saved_config, Config),
     Participants = proplists:get_value(participants, ConfigList),
@@ -4137,8 +4157,8 @@ sc_ws_oracle_contract_(Origin, Config) ->
             end
         end,
     Actors = [{R, GetPubkeys(R)} || R <- [initiator, responder]],
-    [sc_ws_oracle_contract_(Owner, GetVolley, Node, SenderConnPid,
-                            AckConnPid, OwnerPubkey, OtherPubkey)
+    [Fun(Owner, GetVolley, Node, SenderConnPid,
+         AckConnPid, OwnerPubkey, OtherPubkey)
         || {Owner, {OwnerPubkey, OtherPubkey}} <- Actors],
     ok.
 
@@ -4259,6 +4279,65 @@ sc_ws_oracle_contract_(Owner, GetVolley, Node, ConnPid1, ConnPid2,
     {OwnerBal1, _} = {OwnerBal + ContractBalance, OwnerBal1},
     ok.
 
+sc_ws_nameservice_contract_(Owner, GetVolley, Node, ConnPid1, ConnPid2,
+                            OwnerPubkey, OtherPubkey) ->
+    %% Register an oracle. It will be used in an off-chain contract
+    %% Oracle ask itself a question and answers it
+    {NamePubkey, NamePrivkey} = initialize_account(Node, 100000),
+    HexEncode = fun(L) -> list_to_binary(aect_utils:hex_bytes(L)) end,
+
+    Code = contract_byte_code("channel_on_chain_contract_name_resolution"),
+    InitArgument = <<"()">>,
+    {ok, EncodedInitData} = aect_sophia:encode_call_data(Code, <<"init">>,
+                                                         InitArgument),
+    {CreateVolley, OwnerConnPid, OwnerPubKey} = GetVolley(Owner),
+    ?WS:send_tagged(OwnerConnPid, <<"update">>, <<"new_contract">>,
+                    #{vm_version => 1,
+                      deposit    => 10,
+                      code       => Code,
+                      call_data  => EncodedInitData}),
+
+    UnsignedStateTx = CreateVolley(),
+    ContractPubKey = contract_id_from_create_update(OwnerPubKey,
+                                                    UnsignedStateTx),
+
+    ContractCanNameResolve = 
+        fun(Who, Name0, Key0, Result) ->
+            {UpdateVolley, UpdaterConnPid, _UpdaterPubKey} = GetVolley(Who),
+            AddQuotes = fun(B) when is_binary(B) -> <<"\"", B, "\"">> end,
+            Name = AddQuotes(Name0),
+            Key = AddQuotes(Key0),
+            Tx = call_a_contract(<<"can_resolve">>,
+                                 <<"(", Name/binary, ", ", Key/binary,")">>,
+                                 ContractPubKey, Code,
+                                 UpdaterConnPid, UpdateVolley),
+            #{<<"value">> := R} =
+                ws_get_decoded_result(ConnPid1, ConnPid2,
+                                      <<"bool">>,
+                                      Tx),
+            {R, R} = {Result, R}
+
+        end,
+    Test =
+        fun(Name, Key, Result) ->
+            [ContractCanNameResolve(Who, Name, Key, Result)
+                || Who <- [initiator, responder]]
+        end,
+
+    Name = <<"tralala.test">>,
+    Test(Name, <<"oracle">>, false),
+    register_name(NamePubkey, NamePrivkey, Name,
+                  [{<<"account_pubkey">>, aec_id:create(account, <<1:256>>)},
+                   {<<"oracle">>, aec_id:create(oracle, <<2:256>>)},
+                   {<<"unexpected_key">>, aec_id:create(account, <<3:256>>)}],
+                  Node),
+    Test(Name, <<"account_pubkey">>, true),
+    Test(Name, <<"oracle">>, true),
+    Test(Name, <<"unexpected_key">>, true),
+    Test(Name, <<"missing_key">>, false),
+    ok.
+
+
 register_oracle(OraclePubkey, OraclePrivkey, Opts) ->
     {ok, Nonce} = rpc(aec_next_nonce, pick_for_account, [OraclePubkey]),
     Tx = aeo_test_utils:register_tx(OraclePubkey, Opts#{nonce => Nonce}, #{}),
@@ -4289,6 +4368,46 @@ sign_post_mine(Tx, Privkey) ->
         aec_base58c:encode(transaction, aetx_sign:serialize_to_binary(SignedTx)),
     ok = post_tx(TxHash, EncodedSerializedSignedTx),
     ok = wait_for_tx_hash_on_chain(TxHash).
+
+register_name(Owner, OwnerPrivKey, Name, Pointers, Node) ->
+    Salt = rand:uniform(10000),
+    preclaim_name(Owner, OwnerPrivKey, Name, Salt),
+    claim_name(Owner, OwnerPrivKey, Name, Salt, Node),
+    update_pointers(Owner, OwnerPrivKey, Name, Pointers),
+    ok.
+
+preclaim_name(Owner, OwnerPrivKey, Name, Salt) ->
+    {ok, NameAscii} = aens_utils:to_ascii(Name),
+    CHash = aens_hash:commitment_hash(NameAscii, Salt),
+    TxSpec = aens_test_utils:preclaim_tx_spec(Owner, CHash, #{}),
+    {ok, Tx} = aens_preclaim_tx:new(TxSpec),
+    sign_post_mine(Tx, OwnerPrivKey),
+    ok.
+
+claim_name(Owner, OwnerPrivKey, Name, Salt, Node) ->
+    Delta = aec_governance:name_claim_preclaim_delta(),
+    aecore_suite_utils:mine_key_blocks(Node, Delta),
+    TxSpec = aens_test_utils:claim_tx_spec(Owner, Name, Salt, #{}),
+    {ok, Tx} = aens_claim_tx:new(TxSpec),
+    sign_post_mine(Tx, OwnerPrivKey),
+    ok.
+    
+update_pointers(Owner, OwnerPrivKey, Name, Pointers0) ->
+    {ok, NameAscii} = aens_utils:to_ascii(Name),
+    NHash = aens_hash:name_hash(NameAscii),
+    Pointers =
+        lists:map(
+            fun({PointerName, Value}) ->
+                aens_pointer:new(PointerName, Value)
+            end,
+            Pointers0),
+    NameTTL  = 40000,
+    TxSpec = aens_test_utils:update_tx_spec(
+                Owner, NHash, #{pointers => Pointers, name_ttl => NameTTL}, #{}),
+    {ok, Tx} = aens_update_tx:new(TxSpec),
+    sign_post_mine(Tx, OwnerPrivKey),
+    ok.
+
 
 initialize_account(Node, Amount) ->
     {Pubkey, Privkey} = generate_key_pair(),
