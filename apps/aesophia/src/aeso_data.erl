@@ -4,6 +4,8 @@
         , to_binary/2
         , binary_to_words/1
         , from_heap/3
+        , binary_to_heap/3
+        , heap_to_binary/3
         , from_binary/2
         , from_binary/3
         , get_function_from_calldata/1
@@ -11,6 +13,35 @@
         ]).
 
 -include("aeso_icode.hrl").
+
+-spec relocate_heap(Type :: ?Type(), Heap :: binary(), Ptr :: integer(), Offs :: integer()) ->
+        {ok, integer(), binary()} | {error, term()}.
+%% Returns a new heap fragment with addresses starting at Offs and a pointer into it.
+%% TODO: skip intermediate Erlang value to preserve sharing.
+relocate_heap(Type, Heap, Ptr, Offs) ->
+    case from_heap(Type, Heap, Ptr) of
+        {ok, Value} ->
+            <<NewPtr:32/unit:8, NewHeap/binary>> = to_binary(Value, Offs - 32),
+            {ok, NewPtr, NewHeap};
+        {error, _} = Err -> Err
+    end.
+
+-spec binary_to_heap(Type :: ?Type(), Bin :: binary(), Offs :: integer()) ->
+        {ok, integer(), binary()} | {error, term()}.
+%% Takes a binary encoded with to_binary/1 and returns a heap fragment starting at Offs.
+binary_to_heap(Type, Heap = <<Ptr:32/unit:8, _/binary>>, Offs) ->
+    relocate_heap(Type, Heap, Ptr, Offs);
+binary_to_heap(_Type, <<>>, _Offs) ->
+    {error, binary_too_short}.
+
+-spec heap_to_binary(Type :: ?Type(), Bin :: binary(), Offs :: integer()) ->
+        {ok, integer(), binary()} | {error, term()}.
+heap_to_binary(Type, Heap, Ptr) ->
+    case relocate_heap(Type, Heap, Ptr, 32) of
+        {ok, NewPtr, NewHeap} ->
+            {ok, <<NewPtr:32/unit:8, NewHeap/binary>>};
+        {error, _} = Err -> Err
+    end.
 
 -spec to_binary(aeso_sophia:data()) -> aeso_sophia:heap().
 %% Encode the data as a heap where the first word is the value (for unboxed
@@ -88,7 +119,7 @@ from_heap(Type, Heap, Ptr) ->
         {ok, term()} | {error, term()}.
 from_binary(T, Heap = <<V:256, _/binary>>, BaseAddr) ->
     from_heap(T, <<0:BaseAddr/unit:8, Heap/binary>>, V);
-from_binary(_, Bin, BaseAddr) ->
+from_binary(_, Bin, _BaseAddr) ->
     {error, {binary_too_short, Bin}}.
 
 -spec from_binary(?Type(), binary()) -> {ok, term()} | {error, term()}.
