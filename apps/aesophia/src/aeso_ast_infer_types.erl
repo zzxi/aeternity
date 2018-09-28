@@ -120,9 +120,10 @@ global_env() ->
      {["AENS", "transfer"], Fun([Address, Address, Hash, Signature], Unit)},
      {["AENS", "revoke"],   Fun([Address, Hash, Signature], Unit)},
      %% Primitive maps (TODO: should replace actual maps)
-     {["PMap", "empty"], Fun([], PMap(K, V))},
-     {["PMap", "get"],   Fun([K, PMap(K, V)], Option(V))},
-     {["PMap", "put"],   Fun([K, V, PMap(K, V)], PMap(K, V))},
+     {["PMap", "empty"],  Fun([], PMap(K, V))},
+     {["PMap", "get"],    Fun([K, PMap(K, V)], Option(V))},
+     {["PMap", "delete"], Fun([K, PMap(K, V)], PMap(K, V))},
+     {["PMap", "put"],    Fun([K, V, PMap(K, V)], PMap(K, V))},
      %% Maps
      {["Map", "from_list"], Fun1(List(Pair(K, V)), Map(K, V))},
      {["Map", "to_list"],   Fun1(Map(K, V), List(Pair(K, V)))},

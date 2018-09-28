@@ -320,6 +320,14 @@ ast_body(?qid_app(["PMap", "get"], [Key, {typed, Ann, Map, MapType}], _, _), Ico
               %% TODO: return union(word, ValType) to allow shared pointers in maps
               aeso_icode:option_typerep(ast_typerep(ValType, Icode)));
 
+ast_body(?qid_app(["PMap", "delete"], [Key, {typed, Ann, Map, MapType}], _, _), Icode) ->
+    {KeyType, _ValType} = check_monomorphic_map(Ann, MapType),
+    prim_call(?PRIM_CALL_MAP_DELETE, #integer{value = 0},
+              [ast_body(Map, Icode), ast_body(Key, Icode)],
+              [ast_typerep(MapType, Icode), ast_typerep(KeyType, Icode)],
+              %% TODO: return union(word, ValType) to allow shared pointers in maps
+              ast_typerep(MapType, Icode));
+
 %% Other terms
 ast_body({id, _, Name}, _Icode) ->
     %% TODO Look up id in env

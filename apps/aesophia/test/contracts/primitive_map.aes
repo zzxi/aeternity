@@ -3,5 +3,11 @@ contract PrimitiveMaps =
 
   function test() =
     let m  = PMap.empty() : pmap(string, string)
-    let m1 = PMap.put("foo", "bar", m)
-    PMap.get("foo", m1)
+    let m1 = PMap.put("foo", "value_of_foo",
+             PMap.put("bla", "value_of_bla", m))
+    let m2 = PMap.delete("foo", m1)
+    let m3 = PMap.put("bla", "new_value_of_bla", m2)
+    [PMap.get("foo", m),  PMap.get("bla", m),
+     PMap.get("foo", m1), PMap.get("bla", m1),
+     PMap.get("foo", m2), PMap.get("bla", m2),
+     PMap.get("foo", m3), PMap.get("bla", m3)]

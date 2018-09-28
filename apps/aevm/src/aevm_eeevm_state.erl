@@ -115,7 +115,7 @@ init(#{ env  := Env
 
          , vm_version => maps:get(vm_version, Env)
 
-         , maps => #{}
+         , maps => aevm_eeevm_maps:init_maps()
 
          , chain_state => ChainState
          , chain_api   => ChainAPI

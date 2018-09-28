@@ -267,45 +267,49 @@ map_call(?PRIM_CALL_MAP_GET, _Value, Data, State) ->
     map_call_get(Data, State);
 map_call(?PRIM_CALL_MAP_PUT, _Value, Data, State) ->
     map_call_put(Data, State);
+map_call(?PRIM_CALL_MAP_DELETE, _Value, Data, State) ->
+    map_call_delete(Data, State);
 map_call(_, _, _, _) ->
     {error, out_of_gas}.
 
 map_call_empty(Data, State) ->
     [KeyType, ValType] = get_args([typerep, typerep], Data),
-    {MapId, State1} = aevm_eeevm_maps:new_map(KeyType, ValType, #{}, State),
+    {MapId, State1} = aevm_eeevm_maps:empty(KeyType, ValType, State),
     {ok, {ok, <<MapId:32/unit:8>>}, 0, State1}.
 
 map_call_get(Data, State) ->
     [MapId]   = get_args([word], Data),
-    {ok, Map} = aevm_eeevm_maps:get_map(MapId, State),
-    KeyType   = aevm_eeevm_maps:map_keytype(Map),
-    ValType   = aevm_eeevm_maps:map_valtype(Map),
-    Contents  = aevm_eeevm_maps:map_contents(Map),
+    {KeyType, ValType} = aevm_eeevm_maps:map_type(MapId, State),
     [_, Key]  = get_args([word, KeyType], Data),
     KeyBin    = aeso_data:to_binary(Key),   %% TODO: avoid going through Erlang term
-    Res = case Contents of
-            #{ KeyBin := ValBin } ->
+    Res = case aevm_eeevm_maps:get(MapId, KeyBin, State) of
+            false -> none;
+            ValBin when is_binary(ValBin) ->
                 %% TODO: ...and here
                 {ok, Val} = aeso_data:from_binary(ValType, ValBin),
-                {some, Val};
-            _ -> none
+                {some, Val}
           end,
     %% TODO: ... because we return a binary in the end anyway!
     {ok, {ok, aeso_data:to_binary(Res)}, 0, State}.
 
 map_call_put(Data, State) ->
     [MapId]       = get_args([word], Data),
-    {ok, Map}     = aevm_eeevm_maps:get_map(MapId, State),
-    KeyType       = aevm_eeevm_maps:map_keytype(Map),
-    ValType       = aevm_eeevm_maps:map_keytype(Map),
-    Contents      = aevm_eeevm_maps:map_contents(Map),
+    {KeyType, ValType} = aevm_eeevm_maps:map_type(MapId, State),
     %% TODO: don't go through Erlang term
     [_, Key, Val] = get_args([word, KeyType, ValType], Data),
     KeyBin        = aeso_data:to_binary(Key),
     ValBin        = aeso_data:to_binary(Val),
-    {NewMapId, State1} = aevm_eeevm_maps:new_map(KeyType, ValType, Contents#{ KeyBin => ValBin }, State),
+    {NewMapId, State1} = aevm_eeevm_maps:put(MapId, KeyBin, ValBin, State),
     {ok, {ok, <<NewMapId:256>>}, 0, State1}.
 
+map_call_delete(Data, State) ->
+    [MapId]       = get_args([word], Data),
+    {KeyType, _ValType} = aevm_eeevm_maps:map_type(MapId, State),
+    %% TODO: don't go through Erlang term
+    [_, Key] = get_args([word, KeyType], Data),
+    KeyBin        = aeso_data:to_binary(Key),
+    {NewMapId, State1} = aevm_eeevm_maps:delete(MapId, KeyBin, State),
+    {ok, {ok, <<NewMapId:256>>}, 0, State1}.
 
 %% ------------------------------------------------------------------
 %% Internal functions
