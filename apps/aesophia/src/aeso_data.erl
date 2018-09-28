@@ -5,40 +5,68 @@
         , binary_to_words/1
         , from_heap/3
         , binary_to_heap/3
-        , heap_to_binary/3
+        , heap_to_binary/2
+        , heap_value/2
+        , heap_value/3
+        , heap_value_pointer/1
+        , heap_value_offset/1
+        , heap_value_heap/1
         , from_binary/2
         , from_binary/3
         , get_function_from_calldata/1
         , sophia_type_to_typerep/1
         ]).
 
+-export_type([binary_value/0, heap_value/0, heap_fragment/0]).
+
+-type pointer()       :: non_neg_integer().
+-type offset()        :: non_neg_integer().
+-type binary_value()  :: binary().
+-type heap_fragment() :: {offset(), binary()}.
+-type heap_value()    :: {pointer(), heap_fragment()}.
+
 -include("aeso_icode.hrl").
 
--spec relocate_heap(Type :: ?Type(), Heap :: binary(), Ptr :: integer(), Offs :: integer()) ->
-        {ok, integer(), binary()} | {error, term()}.
+-spec heap_value(pointer(), binary(), offset()) -> heap_value().
+heap_value(Ptr, Heap, Offs) -> {Ptr, {Offs, Heap}}.
+
+-spec heap_value(pointer(), binary()) -> heap_value().
+heap_value(Ptr, Heap) -> heap_value(Ptr, Heap, 0).
+
+-spec heap_value_pointer(heap_value()) -> pointer().
+heap_value_pointer({Ptr, _}) -> Ptr.
+
+-spec heap_value_offset(heap_value()) -> offset().
+heap_value_offset({_, {Offs, _}}) -> Offs.
+
+-spec heap_value_heap(heap_value()) -> binary().
+heap_value_heap({_, {_, Heap}}) -> Heap.
+
+-spec relocate_heap(Type :: ?Type(), HeapVal :: heap_value(), Offs :: offset()) ->
+        {ok, heap_value()} | {error, term()}.
 %% Returns a new heap fragment with addresses starting at Offs and a pointer into it.
 %% TODO: skip intermediate Erlang value to preserve sharing.
-relocate_heap(Type, Heap, Ptr, Offs) ->
+relocate_heap(Type, {Ptr, {0, Heap}}, Offs) ->  %% TODO: Handle non-zero offset fragments!
     case from_heap(Type, Heap, Ptr) of
         {ok, Value} ->
             <<NewPtr:32/unit:8, NewHeap/binary>> = to_binary(Value, Offs - 32),
-            {ok, NewPtr, NewHeap};
+            {ok, heap_value(NewPtr, NewHeap, Offs)};
         {error, _} = Err -> Err
     end.
 
--spec binary_to_heap(Type :: ?Type(), Bin :: binary(), Offs :: integer()) ->
-        {ok, integer(), binary()} | {error, term()}.
+-spec binary_to_heap(Type :: ?Type(), Bin :: binary_value(), Offs :: offset()) ->
+        {ok, heap_value()} | {error, term()}.
 %% Takes a binary encoded with to_binary/1 and returns a heap fragment starting at Offs.
 binary_to_heap(Type, Heap = <<Ptr:32/unit:8, _/binary>>, Offs) ->
-    relocate_heap(Type, Heap, Ptr, Offs);
+    relocate_heap(Type, heap_value(Ptr, Heap), Offs);
 binary_to_heap(_Type, <<>>, _Offs) ->
     {error, binary_too_short}.
 
--spec heap_to_binary(Type :: ?Type(), Bin :: binary(), Offs :: integer()) ->
-        {ok, integer(), binary()} | {error, term()}.
-heap_to_binary(Type, Heap, Ptr) ->
-    case relocate_heap(Type, Heap, Ptr, 32) of
-        {ok, NewPtr, NewHeap} ->
+-spec heap_to_binary(Type :: ?Type(), Heap :: heap_value()) ->
+        {ok, binary_value()} | {error, term()}.
+heap_to_binary(Type, Heap) ->
+    case relocate_heap(Type, Heap, 32) of
+        {ok, {NewPtr, {_, NewHeap}}} ->
             {ok, <<NewPtr:32/unit:8, NewHeap/binary>>};
         {error, _} = Err -> Err
     end.

@@ -162,7 +162,9 @@ init_vm(State, Code, Mem, Store) ->
                             {ok, Type} = aeso_data:from_binary(typerep, TypeBin),
                             Addr      = byte_size(Calldata) + 32,
                             StateData = aevm_eeevm_store:get_sophia_state(Store),
-                            {ok, StatePtr, StateHeap} = aeso_data:binary_to_heap(Type, StateData, Addr),
+                            {ok, StateValue} = aeso_data:binary_to_heap(Type, StateData, Addr),
+                            StatePtr = aeso_data:heap_value_pointer(StateValue),
+                            StateHeap = aeso_data:heap_value_heap(StateValue),
                             State3    = aevm_eeevm_memory:write_area(Addr, StateHeap, State2),
                             aevm_eeevm_memory:store(0, StatePtr, State3)
                     end;
@@ -178,7 +180,7 @@ do_return(Us0, Us1, State) ->
             %% Us1 is a pointer to the actual value.
             Heap       = get_heap(State),
             {ok, Type} = aeso_data:from_heap(typerep, Heap, Us0),
-            {ok, Out}  = aeso_data:heap_to_binary(Type, Heap, Us1),
+            {ok, Out}  = aeso_data:heap_to_binary(Type, aeso_data:heap_value(Us1, Heap)),
             set_out(Out, State)
             catch _:_ ->
                 io:format("** Error reading return value\n~s", [format_mem(mem(State))]),
@@ -203,7 +205,9 @@ return_contract_call_result(Addr, Size, ReturnData, State) ->
                 HeapSize   = aevm_eeevm_memory:size_in_words(State) * 32,
                 {Heap, _}  = aevm_eeevm_memory:get_area(0, HeapSize, State),
                 {ok, Type} = aeso_data:from_heap(typerep, Heap, TypePtr),
-                {ok, Ptr, OutHeap} = aeso_data:binary_to_heap(Type, ReturnData, HeapSize),
+                {ok, OutValue} = aeso_data:binary_to_heap(Type, ReturnData, HeapSize),
+                Ptr            = aeso_data:heap_value_pointer(OutValue),
+                OutHeap        = aeso_data:heap_value_heap(OutValue),
                 {Ptr, aevm_eeevm_memory:write_area(HeapSize, OutHeap, State)}
             catch _:Err ->
                 io:format("** Failed to decode contract return value\n~P\n~p\n", [erlang:get_stacktrace(), 20, Err]),
@@ -231,7 +235,7 @@ save_store(#{ chain_state := ChainState
                         Heap         = get_heap(State),
                         {ok, Type}   = aeso_data:from_heap(typerep, Heap, TypePtr),
                         {Ptr, _}     = aevm_eeevm_memory:load(Addr, State),
-                        {ok, Data}   = aeso_data:heap_to_binary(Type, Heap, Ptr),
+                        {ok, Data}   = aeso_data:heap_to_binary(Type, aeso_data:heap_value(Ptr, Heap)),
                         Store        = ChainAPI:get_store(ChainState),
                         Store1       = aevm_eeevm_store:set_sophia_state(Data, Store),
                         State#{ chain_state => ChainAPI:set_store(Store1, ChainState) }
@@ -253,7 +257,7 @@ get_contract_call_input(IOffset, ISize, State) ->
             Ptr     = IOffset,
             Heap       = get_heap(State),
             {ok, Type} = aeso_data:from_heap(typerep, Heap, TypePtr),
-            {ok, Arg}  = aeso_data:heap_to_binary(Type, Heap, Ptr),
+            {ok, Arg}  = aeso_data:heap_to_binary(Type, aeso_data:heap_value(Ptr, Heap)),
             {Arg, State}
     end.
 
