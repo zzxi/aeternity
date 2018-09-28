@@ -19,16 +19,20 @@
 
 -export_type([binary_value/0, heap_value/0, heap_fragment/0]).
 
+-record(heap, { offset :: offset(), heap :: binary() }).
+
 -type pointer()       :: non_neg_integer().
 -type offset()        :: non_neg_integer().
 -type binary_value()  :: binary().
--type heap_fragment() :: {offset(), binary()}.
+-type heap_fragment() :: #heap{}.
 -type heap_value()    :: {pointer(), heap_fragment()}.
 
 -include("aeso_icode.hrl").
 
+%% -- Manipulating heap values -----------------------------------------------
+
 -spec heap_value(pointer(), binary(), offset()) -> heap_value().
-heap_value(Ptr, Heap, Offs) -> {Ptr, {Offs, Heap}}.
+heap_value(Ptr, Heap, Offs) -> {Ptr, #heap{offset = Offs, heap = Heap}}.
 
 -spec heap_value(pointer(), binary()) -> heap_value().
 heap_value(Ptr, Heap) -> heap_value(Ptr, Heap, 0).
@@ -37,16 +41,18 @@ heap_value(Ptr, Heap) -> heap_value(Ptr, Heap, 0).
 heap_value_pointer({Ptr, _}) -> Ptr.
 
 -spec heap_value_offset(heap_value()) -> offset().
-heap_value_offset({_, {Offs, _}}) -> Offs.
+heap_value_offset({_, Heap}) -> Heap#heap.offset.
 
 -spec heap_value_heap(heap_value()) -> binary().
-heap_value_heap({_, {_, Heap}}) -> Heap.
+heap_value_heap({_, Heap}) -> Heap#heap.heap.
+
+%% -- Translating between heap values and binary values ----------------------
 
 -spec relocate_heap(Type :: ?Type(), HeapVal :: heap_value(), Offs :: offset()) ->
         {ok, heap_value()} | {error, term()}.
 %% Returns a new heap fragment with addresses starting at Offs and a pointer into it.
 %% TODO: skip intermediate Erlang value to preserve sharing.
-relocate_heap(Type, {Ptr, {0, Heap}}, Offs) ->  %% TODO: Handle non-zero offset fragments!
+relocate_heap(Type, {Ptr, #heap{offset = 0, heap = Heap}}, Offs) ->  %% TODO: Handle non-zero offset fragments!
     case from_heap(Type, Heap, Ptr) of
         {ok, Value} ->
             <<NewPtr:32/unit:8, NewHeap/binary>> = to_binary(Value, Offs - 32),
@@ -66,7 +72,7 @@ binary_to_heap(_Type, <<>>, _Offs) ->
         {ok, binary_value()} | {error, term()}.
 heap_to_binary(Type, Heap) ->
     case relocate_heap(Type, Heap, 32) of
-        {ok, {NewPtr, {_, NewHeap}}} ->
+        {ok, {NewPtr, #heap{heap = NewHeap}}} ->
             {ok, <<NewPtr:32/unit:8, NewHeap/binary>>};
         {error, _} = Err -> Err
     end.
