@@ -279,12 +279,18 @@ map_call_get(Data, State) ->
     [MapId]   = get_args([word], Data),
     {ok, Map} = aevm_eeevm_maps:get_map(MapId, State),
     KeyType   = aevm_eeevm_maps:map_keytype(Map),
+    ValType   = aevm_eeevm_maps:map_valtype(Map),
     Contents  = aevm_eeevm_maps:map_contents(Map),
     [_, Key]  = get_args([word, KeyType], Data),
+    KeyBin    = aeso_data:to_binary(Key),   %% TODO: avoid going through Erlang term
     Res = case Contents of
-            #{ Key := Val } -> {some, Val};
-            _               -> none
+            #{ KeyBin := ValBin } ->
+                %% TODO: ...and here
+                {ok, Val} = aeso_data:from_binary(ValType, ValBin),
+                {some, Val};
+            _ -> none
           end,
+    %% TODO: ... because we return a binary in the end anyway!
     {ok, {ok, aeso_data:to_binary(Res)}, 0, State}.
 
 map_call_put(Data, State) ->
@@ -293,8 +299,11 @@ map_call_put(Data, State) ->
     KeyType       = aevm_eeevm_maps:map_keytype(Map),
     ValType       = aevm_eeevm_maps:map_keytype(Map),
     Contents      = aevm_eeevm_maps:map_contents(Map),
+    %% TODO: don't go through Erlang term
     [_, Key, Val] = get_args([word, KeyType, ValType], Data),
-    {NewMapId, State1} = aevm_eeevm_maps:new_map(KeyType, ValType, Contents#{ Key => Val }, State),
+    KeyBin        = aeso_data:to_binary(Key),
+    ValBin        = aeso_data:to_binary(Val),
+    {NewMapId, State1} = aevm_eeevm_maps:new_map(KeyType, ValType, Contents#{ KeyBin => ValBin }, State),
     {ok, {ok, <<NewMapId:256>>}, 0, State1}.
 
 

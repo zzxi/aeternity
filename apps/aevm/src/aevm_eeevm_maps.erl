@@ -18,11 +18,12 @@
 -export_type([map_id/0, pmap/0]).
 
 -type map_id()  :: integer().
+-type map_data() :: #{binary() => binary()}.
 -type typerep() :: aeso_sophia:type().
 
 -record(pmap, {key_t :: typerep(),
                val_t :: typerep(),
-               data  :: map()}).
+               data  :: map_data()}).
 
 -opaque pmap() :: #pmap{}.
 
@@ -32,7 +33,7 @@ map_keytype(#pmap{key_t = KeyT}) -> KeyT.
 -spec map_valtype(pmap()) -> typerep().
 map_valtype(#pmap{val_t = ValT}) -> ValT.
 
--spec map_contents(pmap()) -> map().
+-spec map_contents(pmap()) -> map_data().
 map_contents(#pmap{data = Data}) -> Data.
 
 -spec get_map(map_id(), aevm_eeevm_state:state()) -> {ok, pmap()} | {error, not_found}.
