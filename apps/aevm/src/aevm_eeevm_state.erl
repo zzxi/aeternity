@@ -35,17 +35,13 @@
         , gaslimit/1
         , gasprice/1
         , get_contract_call_input/3
-        , get_map/2
         , init/2
         , jumpdests/1
         , logs/1
         , origin/1
         , out/1
-        , map_keytype/1
-        , map_valtype/1
-        , map_contents/1
+        , maps/1
         , mem/1
-        , new_map/4
         , no_recursion/1
         , number/1
         , return_contract_call_result/4
@@ -55,6 +51,7 @@
         , set_cp/2
         , set_gas/2
         , set_jumpdests/2
+        , set_maps/2
         , set_mem/2
         , set_out/2
         , set_selfdestruct/2
@@ -395,26 +392,6 @@ set_jumpdests(Value, State)    -> maps:put(jumpdests, Value, State).
 set_selfdestruct(Value, State) -> maps:put(selfdestruct, Value, State).
 set_maps(Maps, State)         -> maps:put(maps, Maps, State).
 set_chain_state(Value, State) -> maps:put(chain_state, Value, State).
-
-%% Primitive maps
-
--record(pmap, {key_t, val_t, data}).
-
-map_keytype(#pmap{key_t = KeyT}) -> KeyT.
-map_valtype(#pmap{val_t = ValT}) -> ValT.
-map_contents(#pmap{data = Data}) -> Data.
-
-get_map(MapId, State) ->
-    case maps(State) of
-        #{ MapId := Map } -> {ok, Map};
-        _                 -> {error, not_found}
-    end.
-
-new_map(KeyType, ValType, Data, State) when is_map(Data) ->
-    Maps  = maps(State),
-    MapId = maps:size(Maps) + 1,
-    Map   = #pmap{key_t = KeyType, val_t = ValType, data = Data},
-    {MapId, set_maps(Maps#{ MapId => Map }, State)}.
 
 add_callcreates(#{ data := _
                  , destination := _

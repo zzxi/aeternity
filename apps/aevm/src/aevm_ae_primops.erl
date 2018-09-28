@@ -272,14 +272,14 @@ map_call(_, _, _, _) ->
 
 map_call_empty(Data, State) ->
     [KeyType, ValType] = get_args([typerep, typerep], Data),
-    {MapId, State1} = aevm_eeevm_state:new_map(KeyType, ValType, #{}, State),
+    {MapId, State1} = aevm_eeevm_maps:new_map(KeyType, ValType, #{}, State),
     {ok, {ok, <<MapId:32/unit:8>>}, 0, State1}.
 
 map_call_get(Data, State) ->
     [MapId]   = get_args([word], Data),
-    {ok, Map} = aevm_eeevm_state:get_map(MapId, State),
-    KeyType   = aevm_eeevm_state:map_keytype(Map),
-    Contents  = aevm_eeevm_state:map_contents(Map),
+    {ok, Map} = aevm_eeevm_maps:get_map(MapId, State),
+    KeyType   = aevm_eeevm_maps:map_keytype(Map),
+    Contents  = aevm_eeevm_maps:map_contents(Map),
     [_, Key]  = get_args([word, KeyType], Data),
     Res = case Contents of
             #{ Key := Val } -> {some, Val};
@@ -289,12 +289,12 @@ map_call_get(Data, State) ->
 
 map_call_put(Data, State) ->
     [MapId]       = get_args([word], Data),
-    {ok, Map}     = aevm_eeevm_state:get_map(MapId, State),
-    KeyType       = aevm_eeevm_state:map_keytype(Map),
-    ValType       = aevm_eeevm_state:map_keytype(Map),
-    Contents      = aevm_eeevm_state:map_contents(Map),
+    {ok, Map}     = aevm_eeevm_maps:get_map(MapId, State),
+    KeyType       = aevm_eeevm_maps:map_keytype(Map),
+    ValType       = aevm_eeevm_maps:map_keytype(Map),
+    Contents      = aevm_eeevm_maps:map_contents(Map),
     [_, Key, Val] = get_args([word, KeyType, ValType], Data),
-    {NewMapId, State1} = aevm_eeevm_state:new_map(KeyType, ValType, Contents#{ Key => Val }, State),
+    {NewMapId, State1} = aevm_eeevm_maps:new_map(KeyType, ValType, Contents#{ Key => Val }, State),
     {ok, {ok, <<NewMapId:256>>}, 0, State1}.
 
 
