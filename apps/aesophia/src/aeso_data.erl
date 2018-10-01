@@ -381,8 +381,8 @@ get_chunk(#heap{offset = Offs, heap = Mem}, Addr, Words) when Addr >= Offs ->
 -spec get_function_from_calldata(Calldata::binary()) ->
                                         {ok, term()} | {error, term()}.
 get_function_from_calldata(Calldata) ->
-    case from_binary({tuple, [string]}, Calldata) of
-        {ok, {FunctionName}} ->
+    case from_binary({tuple, [word, {tuple, [string]}]}, Calldata) of
+        {ok, {_, {FunctionName}}} ->
             {ok, FunctionName};
         {error, _} = Error -> Error
     end.

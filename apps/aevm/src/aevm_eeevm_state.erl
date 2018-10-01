@@ -152,23 +152,27 @@ init_vm(State, Code, Mem, Store) ->
             aevm_eeevm_store:init(Store, State1);
         ?AEVM_01_Sophia_01 ->
             %% Write calldata at address 32 and put the pointer to the value on the stack.
-            case data(State1) of
-                <<Ptr:32/unit:8, Calldata/binary>> ->
-                    State2 = aevm_eeevm_stack:push(Ptr, aevm_eeevm_memory:write_area(32, Calldata, State1)),
-                    %% Write the state on top of it
-                    case aevm_eeevm_store:get_sophia_state_type(Store) of
-                        false -> State2;  %% No state yet (init function)
-                        TypeBin ->
-                            {ok, Type} = aeso_data:from_binary(typerep, TypeBin),
-                            Addr      = byte_size(Calldata) + 32,
-                            StateData = aevm_eeevm_store:get_sophia_state(Store),
-                            {ok, StateValue} = aeso_data:binary_to_heap(Type, StateData, Addr),
-                            StatePtr = aeso_data:heap_value_pointer(StateValue),
-                            StateHeap = aeso_data:heap_value_heap(StateValue),
-                            State3    = aevm_eeevm_memory:write_area(Addr, StateHeap, State2),
-                            aevm_eeevm_memory:store(0, StatePtr, State3)
-                    end;
-                _ -> set_gas(0, State1) %% Bad calldata, consume all gas
+            Calldata = data(State1),
+            %% Calldata can contain maps, so we can't simply write it
+            %% to memory. The calldata should be a pair of a typerep
+            %% and the actual calldata.
+            {ok, {Type}} = aeso_data:from_binary({tuple, [typerep]}, Calldata),
+            {ok, CalldataHeap} = aeso_data:binary_to_heap({tuple, [typerep, Type]}, Calldata, 32),
+            Ptr         = aeso_data:heap_value_pointer(CalldataHeap),
+            CalldataMem = aeso_data:heap_value_heap(CalldataHeap),
+            State2      = aevm_eeevm_stack:push(Ptr, aevm_eeevm_memory:write_area(32, CalldataMem, State1)),
+            %% Write the state on top of it
+            case aevm_eeevm_store:get_sophia_state_type(Store) of
+                false -> State2;  %% No state yet (init function)
+                TypeBin ->
+                    {ok, StateType} = aeso_data:from_binary(typerep, TypeBin),
+                    Addr      = byte_size(CalldataMem) + 32,
+                    StateData = aevm_eeevm_store:get_sophia_state(Store),
+                    {ok, StateValue} = aeso_data:binary_to_heap(StateType, StateData, Addr),
+                    StatePtr = aeso_data:heap_value_pointer(StateValue),
+                    StateHeap = aeso_data:heap_value_heap(StateValue),
+                    State3    = aevm_eeevm_memory:write_area(Addr, StateHeap, State2),
+                    aevm_eeevm_memory:store(0, StatePtr, State3)
             end
     end.
 
@@ -257,7 +261,15 @@ get_contract_call_input(IOffset, ISize, State) ->
             Ptr     = IOffset,
             Heap       = get_heap(State),
             {ok, Type} = aeso_data:from_heap(typerep, Heap, TypePtr),
-            {ok, Arg}  = aeso_data:heap_to_binary(Type, aeso_data:heap_value(maps(State), Ptr, Heap)),
+            %% TODO: This is a bit awkward since we need to pass the argument
+            %%       typerep in the calldata. Will be much better when types
+            %%       are in contract metadata!
+            %% We put a temporary pair of the type and the value on the heap
+            %% and call heap_to_binary on that.
+            PairPtr   = 32 * aevm_eeevm_memory:size_in_words(State),
+            TmpState  = aevm_eeevm_memory:write_area(PairPtr, <<TypePtr:256, Ptr:256>>, State),
+            TmpHeap   = get_heap(TmpState),
+            {ok, Arg} = aeso_data:heap_to_binary({tuple, [typerep, Type]}, aeso_data:heap_value(maps(TmpState), PairPtr, TmpHeap)),
             {Arg, State}
     end.
 

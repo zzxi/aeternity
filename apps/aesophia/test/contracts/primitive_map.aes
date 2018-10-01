@@ -17,3 +17,6 @@ contract PrimitiveMaps =
       PMap.put("foo", "bar",
       PMap.put("goo", "gaa", PMap.empty())))
 
+  function argument_map(m : pmap(string, string)) =
+    PMap.get("foo", m)
+

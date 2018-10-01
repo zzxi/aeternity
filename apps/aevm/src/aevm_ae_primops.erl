@@ -316,12 +316,12 @@ map_call_delete(Data, State) ->
 %% ------------------------------------------------------------------
 
 get_primop(Data) ->
-    {ok, T} = aeso_data:from_binary({tuple, [word]}, Data),
+    {ok, {_, T}} = aeso_data:from_binary({tuple, [typerep, {tuple, [word]}]}, Data),
     {PrimOp} = T,
     PrimOp.
 
 get_args(Types, Data) ->
-    {ok, Val} = aeso_data:from_binary({tuple, [word | Types]}, Data),
+    {ok, {_, Val}} = aeso_data:from_binary({tuple, [typerep, {tuple, [word | Types]}]}, Data),
     [_ | Args] = tuple_to_list(Val),
     Args.
 
