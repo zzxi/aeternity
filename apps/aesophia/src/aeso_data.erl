@@ -19,15 +19,30 @@
 
 -export_type([binary_value/0, heap_value/0, heap_fragment/0]).
 
--record(heap, { offset :: offset(), heap :: binary() }).
-
--type pointer()       :: non_neg_integer().
--type offset()        :: non_neg_integer().
--type binary_value()  :: binary().
--type heap_fragment() :: #heap{}.
--type heap_value()    :: {pointer(), heap_fragment()}.
-
 -include("aeso_icode.hrl").
+-include("aeso_data.hrl").
+
+-record(heap, { maps   :: #maps{},
+                offset :: offset(),
+                heap   :: binary() }).
+
+-type word()            :: non_neg_integer().
+-type pointer()         :: word().
+-type offset()          :: non_neg_integer().
+-type binary_value()    :: binary().
+-opaque heap_fragment() :: #heap{}.
+-type heap_value()      :: {pointer(), heap_fragment()}.
+
+%% -- Encoding of maps in binary_value() --
+%%
+%% Maps in heap_values (#pmap{}) are maps from binary_value() to
+%% binary_value(). When encoding a #pmap{} in a binary value it is stored as
+%% follows:
+%%
+%%      size key_ptr1 val_ptr1 .. key_ptr[size] val_ptr[size]
+%%      key_bin1 val_bin1 .. key_bin[size] val_bin[size]
+%%
+%% Note that key_bin and val_bin are self-contained binary values.
 
 %% -- Manipulating heap values -----------------------------------------------
 
@@ -52,6 +67,8 @@ heap_value_heap({_, Heap}) -> Heap#heap.heap.
         {ok, heap_value()} | {error, term()}.
 %% Returns a new heap fragment with addresses starting at Offs and a pointer into it.
 %% TODO: skip intermediate Erlang value to preserve sharing.
+%% Actually we can't allow sharing if using the binary as map keys (since they
+%% need to be unique)!
 relocate_heap(Type, {Ptr, #heap{offset = 0, heap = Heap}}, Offs) ->  %% TODO: Handle non-zero offset fragments!
     case from_heap(Type, Heap, Ptr) of
         {ok, Value} ->
@@ -70,12 +87,59 @@ binary_to_heap(_Type, <<>>, _Offs) ->
 
 -spec heap_to_binary(Type :: ?Type(), Heap :: heap_value()) ->
         {ok, binary_value()} | {error, term()}.
-heap_to_binary(Type, Heap) ->
-    case relocate_heap(Type, Heap, 32) of
-        {ok, {NewPtr, #heap{heap = NewHeap}}} ->
-            {ok, <<NewPtr:32/unit:8, NewHeap/binary>>};
-        {error, _} = Err -> Err
+heap_to_binary(Type, {Ptr, Heap}) ->
+    try
+        {Addr, _, Memory} = heap_to_binary(#{}, Type, Ptr, Heap, 32),
+        {ok, <<Addr:256, (list_to_binary(Memory))/binary>>}
+    catch _:Err ->
+        {error, {Err, erlang:get_stacktrace()}}
     end.
+
+-type visited() :: #{pointer() => true}.
+
+-spec heap_to_binary(visited(), ?Type(), pointer(), heap_fragment(), offset()) -> {pointer(), offset(), [iodata()]}.
+heap_to_binary(_, word, Val, _Heap, _) ->
+    {Val, 0, []};
+heap_to_binary(_Visited, string, Val, Heap, BaseAddr) ->
+    Size  = get_word(Heap, Val),
+    Words = 1 + (Size + 31) div 32, %% 1 + ceil(Size / 32)
+    {BaseAddr, Words * 32, [get_chunk(Heap, Val, Words)]};
+heap_to_binary(Visited, {list, T}, Val, Heap, BaseAddr) ->
+    <<Nil:256>> = <<(-1):256>>,   %% empty list is -1
+    case Val of
+        Nil -> {Nil, 0, []};
+        _   -> heap_to_binary(Visited, {tuple, [T, {list, T}]}, Val, Heap, BaseAddr)
+    end;
+heap_to_binary(_Visited, {tuple, []}, _Ptr, _Heap, _BaseAddr) ->
+    {0, 0, []}; %% Use 0 for the empty tuple (need a unique value).
+heap_to_binary(Visited, {tuple, Ts}, Ptr, Heap, BaseAddr) ->
+    Visited1  = visit(Visited, Ptr),
+    BaseAddr1 = BaseAddr + 32 * length(Ts),  %% store component data after the tuple cell
+    Ptrs      = [ P || <<P:256>> <= get_chunk(Heap, Ptr, length(Ts)) ],
+    {BaseAddr2, NewPtrs, Memory} = components_to_binary(Visited1, Ts, Ptrs, Heap, BaseAddr1),
+    {BaseAddr, BaseAddr2 - BaseAddr, [NewPtrs, Memory]};
+heap_to_binary(Visited, {variant, Cs}, Ptr, Heap, BaseAddr) ->
+    Tag = get_word(Heap, Ptr),
+    Ts  = lists:nth(Tag + 1, Cs),
+    heap_to_binary(Visited, {tuple, [word | Ts]}, Ptr, Heap, BaseAddr);
+heap_to_binary(Visited, typerep, Ptr, Heap, BaseAddr) ->
+    Typerep = {variant, [[],                         %% word
+                         [],                         %% string
+                         [typerep],                  %% list
+                         [{list, typerep}],          %% tuple
+                         [{list, {list, typerep}}],  %% variant
+                         []                          %% typerep
+                        ]},
+    heap_to_binary(Visited, Typerep, Ptr, Heap, BaseAddr).
+
+components_to_binary(Visited, Ts, Ps, Heap, BaseAddr) ->
+    components_to_binary(Visited, Ts, Ps, Heap, BaseAddr, [], []).
+
+components_to_binary(_Visited, [], [], _Heap, BaseAddr, PtrAcc, MemAcc) ->
+    {BaseAddr, lists:reverse(PtrAcc), lists:reverse(MemAcc)};
+components_to_binary(Visited, [T | Ts], [Ptr | Ptrs], Heap, BaseAddr, PtrAcc, MemAcc) ->
+    {NewPtr, Size, Mem} = heap_to_binary(Visited, T, Ptr, Heap, BaseAddr),
+    components_to_binary(Visited, Ts, Ptrs, Heap, BaseAddr + Size, [<<NewPtr:256>> | PtrAcc], [Mem | MemAcc]).
 
 -spec to_binary(aeso_sophia:data()) -> aeso_sophia:heap().
 %% Encode the data as a heap where the first word is the value (for unboxed
@@ -229,6 +293,10 @@ from_binary(Visited, typerep, Heap, V) ->
         ?TYPEREP_VARIANT_TAG -> {variant, Arg({list, {list, typerep}})}
     end.
 
+visit(Visited, V) ->
+    check_circular_refs(Visited, V),
+    Visited#{ V => true }.
+
 check_circular_refs(Visited, V) ->
     case maps:is_key(V, Visited) of
         true ->  exit(circular_references);
@@ -240,6 +308,18 @@ heap_word(Heap,Addr) ->
     <<_:BitSize,W:256,_/binary>> = Heap,
     W.
 
+-spec get_word(heap_fragment(), pointer()) -> word().
+get_word(#heap{offset = Offs, heap = Mem}, Addr) when Addr >= Offs ->
+    BitOffs = (Addr - Offs) * 8,
+    <<_:BitOffs, Word:256, _/binary>> = Mem,
+    Word.
+
+-spec get_chunk(heap_fragment(), pointer(), non_neg_integer()) -> binary().
+get_chunk(#heap{offset = Offs, heap = Mem}, Addr, Words) when Addr >= Offs ->
+    BitOffs = (Addr - Offs) * 8,
+    Bytes   = Words * 32,
+    <<_:BitOffs, Chunk:Bytes/binary, _/binary>> = Mem,
+    Chunk.
 
 -spec get_function_from_calldata(Calldata::binary()) ->
                                         {ok, term()} | {error, term()}.
