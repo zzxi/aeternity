@@ -61,29 +61,22 @@ heap_value_offset({_, Heap}) -> Heap#heap.offset.
 -spec heap_value_heap(heap_value()) -> binary().
 heap_value_heap({_, Heap}) -> Heap#heap.heap.
 
-%% -- Translating between heap values and binary values ----------------------
-
--spec relocate_heap(Type :: ?Type(), HeapVal :: heap_value(), Offs :: offset()) ->
-        {ok, heap_value()} | {error, term()}.
-%% Returns a new heap fragment with addresses starting at Offs and a pointer into it.
-%% TODO: skip intermediate Erlang value to preserve sharing.
-%% Actually we can't allow sharing if using the binary as map keys (since they
-%% need to be unique)!
-relocate_heap(Type, {Ptr, #heap{offset = 0, heap = Heap}}, Offs) ->  %% TODO: Handle non-zero offset fragments!
-    case from_heap(Type, Heap, Ptr) of
-        {ok, Value} ->
-            <<NewPtr:32/unit:8, NewHeap/binary>> = to_binary(Value, Offs - 32),
-            {ok, heap_value(NewPtr, NewHeap, Offs)};
-        {error, _} = Err -> Err
-    end.
+%% -- Binary to heap ---------------------------------------------------------
 
 -spec binary_to_heap(Type :: ?Type(), Bin :: binary_value(), Offs :: offset()) ->
         {ok, heap_value()} | {error, term()}.
 %% Takes a binary encoded with to_binary/1 and returns a heap fragment starting at Offs.
-binary_to_heap(Type, Heap = <<Ptr:32/unit:8, _/binary>>, Offs) ->
-    relocate_heap(Type, heap_value(Ptr, Heap), Offs);
+binary_to_heap(Type, <<Ptr:32/unit:8, Heap/binary>>, Offs) ->
+    try
+        {Addr, _, Mem} = heap_to_binary(#{}, Type, Ptr, #heap{ offset = 32, heap = Heap }, Offs),
+        {ok, heap_value(Addr, list_to_binary(Mem), Offs)}
+    catch _:Err ->
+        {error, {Err, erlang:get_stacktrace()}}
+    end;
 binary_to_heap(_Type, <<>>, _Offs) ->
     {error, binary_too_short}.
+
+%% -- Heap to binary ---------------------------------------------------------
 
 -spec heap_to_binary(Type :: ?Type(), Heap :: heap_value()) ->
         {ok, binary_value()} | {error, term()}.
@@ -141,6 +134,8 @@ components_to_binary(Visited, [T | Ts], [Ptr | Ptrs], Heap, BaseAddr, PtrAcc, Me
     {NewPtr, Size, Mem} = heap_to_binary(Visited, T, Ptr, Heap, BaseAddr),
     components_to_binary(Visited, Ts, Ptrs, Heap, BaseAddr + Size, [<<NewPtr:256>> | PtrAcc], [Mem | MemAcc]).
 
+%% -- Value to binary --------------------------------------------------------
+
 -spec to_binary(aeso_sophia:data()) -> aeso_sophia:heap().
 %% Encode the data as a heap where the first word is the value (for unboxed
 %% types) or a pointer to the value (for boxed types).
@@ -175,6 +170,8 @@ to_binary1({variant, Tag, Args}, Address) ->
     to_binary1(list_to_tuple([Tag | Args]), Address);
 to_binary1(Map, Address) when is_map(Map) ->
     to_binary1(maps:to_list(Map), Address);
+to_binary1({}, _Address) ->
+    {0, <<>>};
 to_binary1(Data, Address) when is_tuple(Data) ->
     {Elems,Memory} = to_binaries(tuple_to_list(Data),Address+32*size(Data)),
     ElemsBin = << <<W:256>> || W <- Elems>>,
