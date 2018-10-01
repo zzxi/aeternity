@@ -6,7 +6,6 @@
         , from_heap/3
         , binary_to_heap/3
         , heap_to_binary/2
-        , heap_value/2
         , heap_value/3
         , heap_value/4
         , heap_value_pointer/1
@@ -36,24 +35,21 @@
 
 %% -- Manipulating heap values -----------------------------------------------
 
+no_maps() -> aevm_eeevm_maps:init_maps().
+
 heap_fragment(Maps, Offs, Heap) ->
     #heap{maps = Maps, offset = Offs, heap = Heap}.
 
 heap_fragment(Offs, Heap) ->
-    heap_fragment(aevm_eeevm_maps:init_maps(), Offs, Heap).
+    heap_fragment(no_maps(), Offs, Heap).
 
 -spec heap_value(aevm_eeevm_maps:maps(), pointer(), binary(), offset()) -> heap_value().
 heap_value(Maps, Ptr, Heap, Offs) ->
     {Ptr, heap_fragment(Maps, Offs, Heap)}.
 
--spec heap_value(pointer(), binary(), offset()) -> heap_value().
-heap_value(Ptr, Heap, Offs) when is_integer(Ptr) ->
-    heap_value(aevm_eeevm_maps:init_maps(), Ptr, Heap, Offs);
+-spec heap_value(aevm_eeevm_maps:maps(), pointer(), binary()) -> heap_value().
 heap_value(Maps, Ptr, Heap) ->
     heap_value(Maps, Ptr, Heap, 0).
-
--spec heap_value(pointer(), binary()) -> heap_value().
-heap_value(Ptr, Heap) -> heap_value(Ptr, Heap, 0).
 
 -spec heap_value_pointer(heap_value()) -> pointer().
 heap_value_pointer({Ptr, _}) -> Ptr.
@@ -72,7 +68,8 @@ heap_value_heap({_, Heap}) -> Heap#heap.heap.
 binary_to_heap(Type, <<Ptr:32/unit:8, Heap/binary>>, Offs) ->
     try
         {Addr, _, Mem} = convert(binary, heap, #{}, Type, Ptr, heap_fragment(32, Heap), Offs),
-        {ok, heap_value(Addr, list_to_binary(Mem), Offs)}
+        Maps = no_maps(), %% TODO
+        {ok, heap_value(Maps, Addr, list_to_binary(Mem), Offs)}
     catch _:Err ->
         {error, {Err, erlang:get_stacktrace()}}
     end;
