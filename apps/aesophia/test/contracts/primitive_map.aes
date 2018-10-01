@@ -11,3 +11,9 @@ contract PrimitiveMaps =
      PMap.get("foo", m1), PMap.get("bla", m1),
      PMap.get("foo", m2), PMap.get("bla", m2),
      PMap.get("foo", m3), PMap.get("bla", m3)]
+
+  function return_map() =
+    PMap.delete("goo",
+      PMap.put("foo", "bar",
+      PMap.put("goo", "gaa", PMap.empty())))
+

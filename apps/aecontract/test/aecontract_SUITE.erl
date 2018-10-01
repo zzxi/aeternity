@@ -2212,12 +2212,13 @@ sophia_pmaps(_Cfg) ->
     state(aect_test_utils:new_state()),
     Acc = ?call(new_account, 1000000000),
     Ct  = ?call(create_contract, Acc, primitive_map, {}),
-    {Result, Gas} = ?call(call_contract, Acc, Ct, test, {list, {option, string}}, [], #{return_gas_used => true}),
+    #{<<"foo">> := <<"bar">>} =
+        ?call(call_contract, Acc, Ct, return_map, {pmap, string, string}, []),
+    {Result, _Gas} = ?call(call_contract, Acc, Ct, test, {list, {option, string}}, [], #{return_gas_used => true}),
     Result = [none,                      none,
               {some,<<"value_of_foo">>}, {some,<<"value_of_bla">>},
               none,                      {some,<<"value_of_bla">>},
               none,                      {some,<<"new_value_of_bla">>}],
-    io:format("Gas used = ~p\n", [Gas]),
     ok.
 
 sophia_variant_types(_Cfg) ->

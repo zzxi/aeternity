@@ -180,7 +180,7 @@ do_return(Us0, Us1, State) ->
             %% Us1 is a pointer to the actual value.
             Heap       = get_heap(State),
             {ok, Type} = aeso_data:from_heap(typerep, Heap, Us0),
-            {ok, Out}  = aeso_data:heap_to_binary(Type, aeso_data:heap_value(Us1, Heap)),
+            {ok, Out}  = aeso_data:heap_to_binary(Type, aeso_data:heap_value(maps(State), Us1, Heap)),
             set_out(Out, State)
             catch _:_ ->
                 io:format("** Error reading return value\n~s", [format_mem(mem(State))]),
@@ -257,7 +257,7 @@ get_contract_call_input(IOffset, ISize, State) ->
             Ptr     = IOffset,
             Heap       = get_heap(State),
             {ok, Type} = aeso_data:from_heap(typerep, Heap, TypePtr),
-            {ok, Arg}  = aeso_data:heap_to_binary(Type, aeso_data:heap_value(Ptr, Heap)),
+            {ok, Arg}  = aeso_data:heap_to_binary(Type, aeso_data:heap_value(maps(State), Ptr, Heap)),
             {Arg, State}
     end.
 

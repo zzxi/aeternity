@@ -77,7 +77,13 @@ update(Id, Key, Val, State) ->
     {ok, Map} = get_map(Id, State),
     case Map#pmap.data of
         Data when is_map(Data) -> %% squash local updates
-            add_map(Map#pmap{ data = Data#{Key => Val} }, State);
+            Data1 =
+                case {Map#pmap.parent, Val} of
+                    {none, tombstone} ->  %% skip tombstone if no parent
+                        maps:remove(Key, Data);
+                    _ -> Data#{Key => Val}
+                end,
+            add_map(Map#pmap{ data = Data1 }, State);
         stored -> %% not yet implemented
             add_map(Map#pmap{ parent = Id, data = #{Key => Val} }, State)
     end.

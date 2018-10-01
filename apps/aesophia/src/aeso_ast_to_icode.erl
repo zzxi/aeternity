@@ -307,26 +307,29 @@ ast_body({typed, Ann, ?qid_app(["PMap", "empty"], [], _, MapType), _}, Icode) ->
 
 ast_body(?qid_app(["PMap", "put"], [Key, Val, Map = {typed, Ann, _, MapType}], _, _), Icode) ->
     {KeyType, ValType} = check_monomorphic_map(Ann, MapType),
+    %% Pass map by id (word)
     prim_call(?PRIM_CALL_MAP_PUT, #integer{value = 0},
               [ast_body(Map, Icode), ast_body(Key, Icode), ast_body(Val, Icode)],
               %% TODO: pass value as pointer to make more efficient?
-              [ast_typerep(MapType, Icode), ast_typerep(KeyType, Icode), ast_typerep(ValType, Icode)], ast_typerep(MapType, Icode));
+              [word, ast_typerep(KeyType, Icode), ast_typerep(ValType, Icode)], word);
 
 ast_body(?qid_app(["PMap", "get"], [Key, {typed, Ann, Map, MapType}], _, _), Icode) ->
     {KeyType, ValType} = check_monomorphic_map(Ann, MapType),
+    %% Pass map by id (word)
     prim_call(?PRIM_CALL_MAP_GET, #integer{value = 0},
               [ast_body(Map, Icode), ast_body(Key, Icode)],
-              [ast_typerep(MapType, Icode), ast_typerep(KeyType, Icode)],
+              [word, ast_typerep(KeyType, Icode)],
               %% TODO: return union(word, ValType) to allow shared pointers in maps
               aeso_icode:option_typerep(ast_typerep(ValType, Icode)));
 
 ast_body(?qid_app(["PMap", "delete"], [Key, {typed, Ann, Map, MapType}], _, _), Icode) ->
     {KeyType, _ValType} = check_monomorphic_map(Ann, MapType),
+    %% Pass map by id (word)
     prim_call(?PRIM_CALL_MAP_DELETE, #integer{value = 0},
               [ast_body(Map, Icode), ast_body(Key, Icode)],
-              [ast_typerep(MapType, Icode), ast_typerep(KeyType, Icode)],
+              [word, ast_typerep(KeyType, Icode)],
               %% TODO: return union(word, ValType) to allow shared pointers in maps
-              ast_typerep(MapType, Icode));
+              word);
 
 %% Other terms
 ast_body({id, _, Name}, _Icode) ->
