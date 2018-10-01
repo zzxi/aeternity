@@ -108,6 +108,8 @@ convert(Input, Output, Visited, {list, T}, Val, Heap, BaseAddr) ->
         Nil -> {Nil, 0, []};
         _   -> convert(Input, Output, Visited, {tuple, [T, {list, T}]}, Val, Heap, BaseAddr)
     end;
+convert(_Input, _Output, _Visited, {pmap, _K, _V}, Val, _Heap, _BaseAddr) ->
+    {Val, 0, []};   %% TODO: depends on Input/Output
 convert(_, _, _, {tuple, []}, _Ptr, _Heap, _BaseAddr) ->
     {0, 0, []}; %% Use 0 for the empty tuple (need a unique value).
 convert(Input, Output, Visited, {tuple, Ts}, Ptr, Heap, BaseAddr) ->
@@ -126,7 +128,8 @@ convert(Input, Output, Visited, typerep, Ptr, Heap, BaseAddr) ->
                          [typerep],                  %% list
                          [{list, typerep}],          %% tuple
                          [{list, {list, typerep}}],  %% variant
-                         []                          %% typerep
+                         [],                         %% typerep
+                         [typerep, typerep]          %% map
                         ]},
     convert(Input, Output, Visited, Typerep, Ptr, Heap, BaseAddr).
 
@@ -172,6 +175,7 @@ to_binary1({list, T}, Address)       -> to_binary1({?TYPEREP_LIST_TAG, T}, Addre
 to_binary1({option, T}, Address)     -> to_binary1({variant, [[], [T]]}, Address);
 to_binary1({tuple, Ts}, Address)     -> to_binary1({?TYPEREP_TUPLE_TAG, Ts}, Address);
 to_binary1({variant, Cons}, Address) -> to_binary1({?TYPEREP_VARIANT_TAG, Cons}, Address);
+to_binary1({pmap, K, V}, Address)    -> to_binary1({?TYPEREP_MAP_TAG, K, V}, Address);
 to_binary1({variant, Tag, Args}, Address) ->
     to_binary1(list_to_tuple([Tag | Args]), Address);
 to_binary1(Map, Address) when is_map(Map) ->
@@ -286,14 +290,16 @@ from_binary(Visited, {map, A, B}, Heap, V) ->
 from_binary(Visited, typerep, Heap, V) ->
     check_circular_refs(Visited, V),
     Tag = heap_word(Heap, V),
-    Arg = fun(T) -> from_binary(Visited#{V => true}, T, Heap, heap_word(Heap, V + 32)) end,
+    Arg1 = fun(T, I) -> from_binary(Visited#{V => true}, T, Heap, heap_word(Heap, V + 32 * I)) end,
+    Arg  = fun(T) -> Arg1(T, 1) end,
     case Tag of
         ?TYPEREP_WORD_TAG    -> word;
         ?TYPEREP_STRING_TAG  -> string;
         ?TYPEREP_TYPEREP_TAG -> typerep;
         ?TYPEREP_LIST_TAG    -> {list,   Arg(typerep)};
         ?TYPEREP_TUPLE_TAG   -> {tuple,  Arg({list, typerep})};
-        ?TYPEREP_VARIANT_TAG -> {variant, Arg({list, {list, typerep}})}
+        ?TYPEREP_VARIANT_TAG -> {variant, Arg({list, {list, typerep}})};
+        ?TYPEREP_MAP_TAG     -> {pmap,    Arg(typerep), Arg1(typerep, 2)}
     end.
 
 visit(Visited, V) ->

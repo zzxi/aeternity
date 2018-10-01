@@ -575,7 +575,10 @@ type_value({tuple, As}) ->
                     #list{ elems = [ type_value(A) || A <- As ] }] };
 type_value({variant, Cs}) ->
     #tuple{ cpts = [#integer{ value = ?TYPEREP_VARIANT_TAG },
-                    #list{ elems = [ #list{ elems = [ type_value(A) || A <- As ] } || As <- Cs ] }] }.
+                    #list{ elems = [ #list{ elems = [ type_value(A) || A <- As ] } || As <- Cs ] }] };
+type_value({pmap, K, V}) ->
+    #tuple{ cpts = [#integer{ value = ?TYPEREP_MAP_TAG },
+                    type_value(K), type_value(V)] }.
 
 ast_fun_to_icode(Name, Attrs, Args, Body, TypeRep, #{functions := Funs} = Icode) ->
     NewFuns = [{Name, Attrs, Args, Body, TypeRep}| Funs],

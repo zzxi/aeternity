@@ -67,7 +67,7 @@ builtin_types() ->
      , "option"       => fun([A]) -> {variant, [[], [A]]} end
      , "map"          => fun([K, V]) -> map_typerep(K, V) end
      , ["Chain", "ttl"] => fun([]) -> {variant, [[word], [word]]} end
-     , "pmap"         => fun([_, _]) -> word end    %% TODO: should replace map later
+     , "pmap"         => fun([K, V]) -> {pmap, K, V} end    %% TODO: should replace map later
      }.
 
 builtin_constructors() ->
