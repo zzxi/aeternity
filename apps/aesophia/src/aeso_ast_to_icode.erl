@@ -303,7 +303,7 @@ ast_body({typed, Ann, ?qid_app(["PMap", "empty"], [], _, MapType), _}, Icode) ->
     prim_call(?PRIM_CALL_MAP_EMPTY, #integer{value = 0},
               [ast_type_value(KeyType, Icode),
                ast_type_value(ValType, Icode)],
-              [typerep, typerep], ast_typerep(MapType));
+              [typerep, typerep], word);
 
 ast_body(?qid_app(["PMap", "put"], [Key, Val, Map = {typed, Ann, _, MapType}], _, _), Icode) ->
     {KeyType, ValType} = check_monomorphic_map(Ann, MapType),
