@@ -68,7 +68,7 @@ heap_value_heap({_, Heap}) -> Heap#heap.heap.
 %% Takes a binary encoded with to_binary/1 and returns a heap fragment starting at Offs.
 binary_to_heap(Type, <<Ptr:32/unit:8, Heap/binary>>, Offs) ->
     try
-        {Addr, _, Mem} = heap_to_binary(#{}, Type, Ptr, #heap{ offset = 32, heap = Heap }, Offs),
+        {Addr, _, Mem} = convert(binary, heap, #{}, Type, Ptr, #heap{ offset = 32, heap = Heap }, Offs),
         {ok, heap_value(Addr, list_to_binary(Mem), Offs)}
     catch _:Err ->
         {error, {Err, erlang:get_stacktrace()}}
@@ -82,40 +82,45 @@ binary_to_heap(_Type, <<>>, _Offs) ->
         {ok, binary_value()} | {error, term()}.
 heap_to_binary(Type, {Ptr, Heap}) ->
     try
-        {Addr, _, Memory} = heap_to_binary(#{}, Type, Ptr, Heap, 32),
+        {Addr, _, Memory} = convert(heap, binary, #{}, Type, Ptr, Heap, 32),
         {ok, <<Addr:256, (list_to_binary(Memory))/binary>>}
     catch _:Err ->
         {error, {Err, erlang:get_stacktrace()}}
     end.
 
--type visited() :: #{pointer() => true}.
+%% -- Generic heap/binary conversion -----------------------------------------
 
--spec heap_to_binary(visited(), ?Type(), pointer(), heap_fragment(), offset()) -> {pointer(), offset(), [iodata()]}.
-heap_to_binary(_, word, Val, _Heap, _) ->
+-type visited() :: #{pointer() => true}.
+-type format() :: heap | binary.
+
+-spec convert(Input :: format(), Output :: format(),
+                     visited(), ?Type(), pointer(),
+                     heap_fragment(), offset()) -> {pointer(), offset(), [iodata()]}.
+convert(_, _, _, word, Val, _Heap, _) ->
     {Val, 0, []};
-heap_to_binary(_Visited, string, Val, Heap, BaseAddr) ->
+convert(_, _, _Visited, string, Val, Heap, BaseAddr) ->
     Size  = get_word(Heap, Val),
     Words = 1 + (Size + 31) div 32, %% 1 + ceil(Size / 32)
     {BaseAddr, Words * 32, [get_chunk(Heap, Val, Words)]};
-heap_to_binary(Visited, {list, T}, Val, Heap, BaseAddr) ->
+convert(Input, Output, Visited, {list, T}, Val, Heap, BaseAddr) ->
     <<Nil:256>> = <<(-1):256>>,   %% empty list is -1
     case Val of
         Nil -> {Nil, 0, []};
-        _   -> heap_to_binary(Visited, {tuple, [T, {list, T}]}, Val, Heap, BaseAddr)
+        _   -> convert(Input, Output, Visited, {tuple, [T, {list, T}]}, Val, Heap, BaseAddr)
     end;
-heap_to_binary(_Visited, {tuple, []}, _Ptr, _Heap, _BaseAddr) ->
+convert(_, _, _, {tuple, []}, _Ptr, _Heap, _BaseAddr) ->
     {0, 0, []}; %% Use 0 for the empty tuple (need a unique value).
-heap_to_binary(Visited, {tuple, Ts}, Ptr, Heap, BaseAddr) ->
+convert(Input, Output, Visited, {tuple, Ts}, Ptr, Heap, BaseAddr) ->
     Visited1  = visit(Visited, Ptr),
     BaseAddr1 = BaseAddr + 32 * length(Ts),  %% store component data after the tuple cell
     Ptrs      = [ P || <<P:256>> <= get_chunk(Heap, Ptr, length(Ts)) ],
-    {BaseAddr2, NewPtrs, Memory} = components_to_binary(Visited1, Ts, Ptrs, Heap, BaseAddr1),
+    {BaseAddr2, NewPtrs, Memory} = convert_components(Input, Output, Visited1, Ts, Ptrs, Heap, BaseAddr1),
     {BaseAddr, BaseAddr2 - BaseAddr, [NewPtrs, Memory]};
-heap_to_binary(Visited, {variant, Cs}, Ptr, Heap, BaseAddr) ->
+convert(Input, Output, Visited, {variant, Cs}, Ptr, Heap, BaseAddr) ->
     Tag = get_word(Heap, Ptr),
     Ts  = lists:nth(Tag + 1, Cs),
-    heap_to_binary(Visited, {tuple, [word | Ts]}, Ptr, Heap, BaseAddr);
-heap_to_binary(Visited, typerep, Ptr, Heap, BaseAddr) ->
+    convert(Input, Output, Visited, {tuple, [word | Ts]}, Ptr, Heap, BaseAddr);
+convert(Input, Output, Visited, typerep, Ptr, Heap, BaseAddr) ->
     Typerep = {variant, [[],                         %% word
                          [],                         %% string
                          [typerep],                  %% list
@@ -123,16 +128,17 @@ heap_to_binary(Visited, typerep, Ptr, Heap, BaseAddr) ->
                          [{list, {list, typerep}}],  %% variant
                          []                          %% typerep
                         ]},
-    heap_to_binary(Visited, Typerep, Ptr, Heap, BaseAddr).
+    convert(Input, Output, Visited, Typerep, Ptr, Heap, BaseAddr).
 
-components_to_binary(Visited, Ts, Ps, Heap, BaseAddr) ->
-    components_to_binary(Visited, Ts, Ps, Heap, BaseAddr, [], []).
+convert_components(Input, Output, Visited, Ts, Ps, Heap, BaseAddr) ->
+    convert_components(Input, Output, Visited, Ts, Ps, Heap, BaseAddr, [], []).
 
-components_to_binary(_Visited, [], [], _Heap, BaseAddr, PtrAcc, MemAcc) ->
+convert_components(_, _, _Visited, [], [], _Heap, BaseAddr, PtrAcc, MemAcc) ->
     {BaseAddr, lists:reverse(PtrAcc), lists:reverse(MemAcc)};
-components_to_binary(Visited, [T | Ts], [Ptr | Ptrs], Heap, BaseAddr, PtrAcc, MemAcc) ->
-    {NewPtr, Size, Mem} = heap_to_binary(Visited, T, Ptr, Heap, BaseAddr),
-    components_to_binary(Visited, Ts, Ptrs, Heap, BaseAddr + Size, [<<NewPtr:256>> | PtrAcc], [Mem | MemAcc]).
+convert_components(Input, Output, Visited, [T | Ts], [Ptr | Ptrs], Heap, BaseAddr, PtrAcc, MemAcc) ->
+    {NewPtr, Size, Mem} = convert(Input, Output, Visited, T, Ptr, Heap, BaseAddr),
+    convert_components(Input, Output, Visited, Ts, Ptrs, Heap, BaseAddr + Size,
+                         [<<NewPtr:256>> | PtrAcc], [Mem | MemAcc]).
 
 %% -- Value to binary --------------------------------------------------------
 
