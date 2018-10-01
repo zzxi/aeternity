@@ -16,28 +16,21 @@
         , delete/3
         ]).
 
--export_type([map_id/0, vm_maps/0]).
+-include_lib("aesophia/src/aeso_data.hrl").
 
--record(vm_maps, { maps    = #{} :: #{ map_id() => pmap() }
-                 , next_id = 0   :: integer() }).
+-export_type([map_id/0, maps/0]).
 
--opaque vm_maps() :: #vm_maps{}.
+-opaque maps() :: #maps{}.
 
--type state()    :: state().
--type map_id()   :: integer().
--type value()    :: aeso_data:binary_value().
--type map_data() :: #{value() => value() | tombstone}.
--type typerep()  :: aeso_sophia:type().
-
--record(pmap, {key_t  :: typerep(),
-               val_t  :: typerep(),
-               parent :: none | map_id(),
-               data   :: map_data() | stored}).
+-type state()   :: state().
+-type map_id()  :: non_neg_integer().
+-type value()   :: aeso_data:binary_value().
+-type typerep() :: aeso_sophia:type().
 
 -type pmap() :: #pmap{}.
 
--spec init_maps() -> vm_maps().
-init_maps() -> #vm_maps{}.
+-spec init_maps() -> maps().
+init_maps() -> #maps{}.
 
 -spec map_type(map_id(), state()) -> {typerep(), typerep()}.
 map_type(Id, State) ->
@@ -94,15 +87,15 @@ update(Id, Key, Val, State) ->
 -spec get_map(map_id(), state()) -> {ok, pmap()} | {error, not_found}.
 get_map(MapId, State) ->
     case aevm_eeevm_state:maps(State) of
-        #vm_maps{ maps = #{ MapId := Map } } -> {ok, Map};
+        #maps{ maps = #{ MapId := Map } } -> {ok, Map};
         _ -> {error, not_found}
     end.
 
 -spec add_map(pmap(), state()) -> {map_id(), state()}.
 add_map(Map, State) ->
     Maps    = aevm_eeevm_state:maps(State),
-    NewId   = Maps#vm_maps.next_id,
-    NewMaps = Maps#vm_maps{ next_id = NewId + 1,
-                            maps = (Maps#vm_maps.maps)#{ NewId => Map } },
+    NewId   = Maps#maps.next_id,
+    NewMaps = Maps#maps{ next_id = NewId + 1,
+                         maps = (Maps#maps.maps)#{ NewId => Map } },
     {NewId, aevm_eeevm_state:set_maps(NewMaps, State)}.
 
