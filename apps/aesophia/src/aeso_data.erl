@@ -193,6 +193,12 @@ to_binary1({variant, Cons}, Address) -> to_binary1({?TYPEREP_VARIANT_TAG, Cons},
 to_binary1({pmap, K, V}, Address)    -> to_binary1({?TYPEREP_MAP_TAG, K, V}, Address);
 to_binary1({variant, Tag, Args}, Address) ->
     to_binary1(list_to_tuple([Tag | Args]), Address);
+to_binary1({pmap, Map}, Address) -> %% TODO: Remove tag when replacing map with pmap
+    Size = maps:size(Map),
+    %% Sort according to binary ordering
+    KVs = lists:sort([ {to_binary(K), to_binary(V)} || {K, V} <- maps:to_list(Map) ]),
+    {Address, <<Size:256, << <<(byte_size(K)):256, K/binary,
+                               (byte_size(V)):256, V/binary>> || {K, V} <- KVs >>/binary >>};
 to_binary1(Map, Address) when is_map(Map) ->
     to_binary1(maps:to_list(Map), Address);
 to_binary1({}, _Address) ->
