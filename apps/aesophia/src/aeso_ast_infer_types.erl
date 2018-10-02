@@ -437,7 +437,7 @@ infer_expr(Env, {record, Attrs, Fields}) ->
     constrain([begin
                 [{proj, _, FieldName}] = LV,
                 #field_constraint{
-                    record_t = RecordType,
+                    record_t = unfold_types_in_type(RecordType),
                     field    = FieldName,
                     field_t  = T,
                     kind     = create,
@@ -452,7 +452,7 @@ infer_expr(Env, {proj, Attrs, Record, FieldName}) ->
     NewRecord = {typed, _, _, RecordType} = infer_expr(Env, Record),
     FieldType = fresh_uvar(Attrs),
     constrain([#field_constraint{
-        record_t = RecordType,
+        record_t = unfold_types_in_type(RecordType),
         field    = FieldName,
         field_t  = FieldType,
         kind     = project,
@@ -525,7 +525,7 @@ check_record_update(Env, RecordType, Fld) ->
                 {field_upd, Ann, LV, check_expr(Env, Fun, FunType)}
         end,
     constrain([#field_constraint{
-        record_t = RecordType,
+        record_t = unfold_types_in_type(RecordType),
         field    = FieldName,
         field_t  = FldType,
         kind     = update,
@@ -696,7 +696,7 @@ insert_typedef(Id, Args, Typedef) ->
 lookup_type(Id) ->
     case ets:lookup(type_defs, type_key(Id)) of
         []                        -> false;
-        [{_Key, Params, Typedef}] -> {Params, Typedef}
+        [{_Key, Params, Typedef}] -> {Params, unfold_types_in_type(Typedef)}
     end.
 
 -spec insert_record_field(string(), field_info()) -> true.
