@@ -7,6 +7,7 @@
         , binary_to_heap/4
         , heap_to_heap/4
         , heap_to_binary/2
+        , binary_to_binary/2
         , heap_value/3
         , heap_value/4
         , heap_value_pointer/1
@@ -97,6 +98,18 @@ binary_to_heap(_Type, <<>>, _NextId, _Offs) ->
 heap_to_binary(Type, {Ptr, Heap}) ->
     try
         {Addr, {_, _, Memory}} = convert(heap, binary, #{}, Type, Ptr, Heap, 32),
+        {ok, <<Addr:256, (list_to_binary(Memory))/binary>>}
+    catch _:Err ->
+        {error, {Err, erlang:get_stacktrace()}}
+    end.
+
+%% -- Binary to binary -------------------------------------------------------
+
+-spec binary_to_binary(Type :: ?Type(), Bin :: binary_value()) ->
+        {ok, binary_value()} | {error, term()}.
+binary_to_binary(Type, <<Ptr:32/unit:8, Heap/binary>>) ->
+    try
+        {Addr, {_, _, Memory}} = convert(binary, binary, #{}, Type, Ptr, heap_fragment(no_maps(0), 32, Heap), 32),
         {ok, <<Addr:256, (list_to_binary(Memory))/binary>>}
     catch _:Err ->
         {error, {Err, erlang:get_stacktrace()}}
