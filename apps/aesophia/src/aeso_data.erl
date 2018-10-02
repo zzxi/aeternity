@@ -9,6 +9,7 @@
         , heap_value/3
         , heap_value/4
         , heap_value_pointer/1
+        , heap_value_maps/1
         , heap_value_offset/1
         , heap_value_heap/1
         , from_binary/2
@@ -35,7 +36,14 @@
 
 %% -- Manipulating heap values -----------------------------------------------
 
-no_maps() -> aevm_eeevm_maps:init_maps().
+no_maps()  -> no_maps(0).
+no_maps(N) when is_integer(N) -> #maps{ next_id = N };
+no_maps(#heap{maps = #maps{next_id = N}}) -> no_maps(N).
+
+merge_maps(#maps{maps = Maps1}, #maps{maps = Maps2, next_id = N}) ->
+    #maps{maps = maps:merge(Maps1, Maps2), next_id = N}.
+
+set_next_id(Heap, N) -> Heap#heap{ maps = Heap#heap.maps#maps{ next_id = N } }.
 
 heap_fragment(Maps, Offs, Heap) ->
     #heap{maps = Maps, offset = Offs, heap = Heap}.
@@ -54,6 +62,9 @@ heap_value(Maps, Ptr, Heap) ->
 -spec heap_value_pointer(heap_value()) -> pointer().
 heap_value_pointer({Ptr, _}) -> Ptr.
 
+-spec heap_value_maps(heap_value()) -> aevm_eeevm_maps:maps().
+heap_value_maps({_, Heap}) -> Heap#heap.maps.
+
 -spec heap_value_offset(heap_value()) -> offset().
 heap_value_offset({_, Heap}) -> Heap#heap.offset.
 
@@ -67,8 +78,7 @@ heap_value_heap({_, Heap}) -> Heap#heap.heap.
 %% Takes a binary encoded with to_binary/1 and returns a heap fragment starting at Offs.
 binary_to_heap(Type, <<Ptr:32/unit:8, Heap/binary>>, Offs) ->
     try
-        {Addr, _, Mem} = convert(binary, heap, #{}, Type, Ptr, heap_fragment(32, Heap), Offs),
-        Maps = no_maps(), %% TODO
+        {Addr, {Maps, _, Mem}} = convert(binary, heap, #{}, Type, Ptr, heap_fragment(32, Heap), Offs),
         {ok, heap_value(Maps, Addr, list_to_binary(Mem), Offs)}
     catch _:Err ->
         {error, {Err, erlang:get_stacktrace()}}
@@ -82,7 +92,7 @@ binary_to_heap(_Type, <<>>, _Offs) ->
         {ok, binary_value()} | {error, term()}.
 heap_to_binary(Type, {Ptr, Heap}) ->
     try
-        {Addr, _, Memory} = convert(heap, binary, #{}, Type, Ptr, Heap, 32),
+        {Addr, {_, _, Memory}} = convert(heap, binary, #{}, Type, Ptr, Heap, 32),
         {ok, <<Addr:256, (list_to_binary(Memory))/binary>>}
     catch _:Err ->
         {error, {Err, erlang:get_stacktrace()}}
@@ -95,17 +105,17 @@ heap_to_binary(Type, {Ptr, Heap}) ->
 
 -spec convert(Input :: format(), Output :: format(),
                      visited(), ?Type(), pointer(),
-                     heap_fragment(), offset()) -> {pointer(), offset(), [iodata()]}.
-convert(_, _, _, word, Val, _Heap, _) ->
-    {Val, 0, []};
+                     heap_fragment(), offset()) -> {pointer(), {#maps{}, offset(), [iodata()]}}.
+convert(_, _, _, word, Val, Heap, _) ->
+    {Val, {no_maps(Heap), 0, []}};
 convert(_, _, _Visited, string, Val, Heap, BaseAddr) ->
     Size  = get_word(Heap, Val),
     Words = 1 + (Size + 31) div 32, %% 1 + ceil(Size / 32)
-    {BaseAddr, Words * 32, [get_chunk(Heap, Val, Words)]};
+    {BaseAddr, {no_maps(Heap), Words * 32, [get_chunk(Heap, Val, Words)]}};
 convert(Input, Output, Visited, {list, T}, Val, Heap, BaseAddr) ->
     <<Nil:256>> = <<(-1):256>>,   %% empty list is -1
     case Val of
-        Nil -> {Nil, 0, []};
+        Nil -> {Nil, {no_maps(Heap), 0, []}};
         _   -> convert(Input, Output, Visited, {tuple, [T, {list, T}]}, Val, Heap, BaseAddr)
     end;
 convert(heap, binary, _Visited, {pmap, _K, _V}, MapId, Heap, BaseAddr) ->
@@ -122,17 +132,20 @@ convert(heap, binary, _Visited, {pmap, _K, _V}, MapId, Heap, BaseAddr) ->
                          Base1}
                     end, {[], BaseAddr + 32}, KVs),
     Mem  = lists:reverse(RMem),
-    {BaseAddr, FinalBase - BaseAddr, [<<Size:256>>, Mem]};
-convert(_Input, _Output, _Visited, {pmap, _K, _V}, Val, _Heap, _BaseAddr) ->
-    {Val, 0, []};   %% TODO: depends on Input/Output
-convert(_, _, _, {tuple, []}, _Ptr, _Heap, _BaseAddr) ->
-    {0, 0, []}; %% Use 0 for the empty tuple (need a unique value).
+    %% Target is binary so no maps required
+    {BaseAddr, {FinalBase - BaseAddr, no_maps(Heap), [<<Size:256>>, Mem]}};
+convert(binary, heap, _Visited, {pmap, _K, _V}, Val, Heap, _BaseAddr) ->
+    io:format("PMAP BINARY TO HEAP\n"),
+    try exit(ok) catch _:_ -> io:format("~p\n", [erlang:get_stacktrace()]) end,
+    {Val, {no_maps(Heap), 0, []}};
+convert(_, _, _, {tuple, []}, _Ptr, Heap, _BaseAddr) ->
+    {0, {no_maps(Heap), 0, []}}; %% Use 0 for the empty tuple (need a unique value).
 convert(Input, Output, Visited, {tuple, Ts}, Ptr, Heap, BaseAddr) ->
     Visited1  = visit(Visited, Ptr),
     BaseAddr1 = BaseAddr + 32 * length(Ts),  %% store component data after the tuple cell
     Ptrs      = [ P || <<P:256>> <= get_chunk(Heap, Ptr, length(Ts)) ],
-    {BaseAddr2, NewPtrs, Memory} = convert_components(Input, Output, Visited1, Ts, Ptrs, Heap, BaseAddr1),
-    {BaseAddr, BaseAddr2 - BaseAddr, [NewPtrs, Memory]};
+    {BaseAddr2, Maps, NewPtrs, Memory} = convert_components(Input, Output, Visited1, Ts, Ptrs, Heap, BaseAddr1),
+    {BaseAddr, {Maps, BaseAddr2 - BaseAddr, [NewPtrs, Memory]}};
 convert(Input, Output, Visited, {variant, Cs}, Ptr, Heap, BaseAddr) ->
     Tag = get_word(Heap, Ptr),
     Ts  = lists:nth(Tag + 1, Cs),
@@ -149,14 +162,16 @@ convert(Input, Output, Visited, typerep, Ptr, Heap, BaseAddr) ->
     convert(Input, Output, Visited, Typerep, Ptr, Heap, BaseAddr).
 
 convert_components(Input, Output, Visited, Ts, Ps, Heap, BaseAddr) ->
-    convert_components(Input, Output, Visited, Ts, Ps, Heap, BaseAddr, [], []).
+    convert_components(Input, Output, Visited, Ts, Ps, Heap, BaseAddr, [], [], no_maps(Heap)).
 
-convert_components(_, _, _Visited, [], [], _Heap, BaseAddr, PtrAcc, MemAcc) ->
-    {BaseAddr, lists:reverse(PtrAcc), lists:reverse(MemAcc)};
-convert_components(Input, Output, Visited, [T | Ts], [Ptr | Ptrs], Heap, BaseAddr, PtrAcc, MemAcc) ->
-    {NewPtr, Size, Mem} = convert(Input, Output, Visited, T, Ptr, Heap, BaseAddr),
+convert_components(_, _, _Visited, [], [], _Heap, BaseAddr, PtrAcc, MemAcc, Maps) ->
+    {BaseAddr, Maps, lists:reverse(PtrAcc), lists:reverse(MemAcc)};
+convert_components(Input, Output, Visited, [T | Ts], [Ptr | Ptrs], Heap, BaseAddr, PtrAcc, MemAcc, Maps) ->
+    %% (Ab)use the next_id field in the input heap for suitable next_id of the output heap.
+    Heap1 = set_next_id(Heap, Maps#maps.next_id),
+    {NewPtr, {Maps1, Size, Mem}} = convert(Input, Output, Visited, T, Ptr, Heap1, BaseAddr),
     convert_components(Input, Output, Visited, Ts, Ptrs, Heap, BaseAddr + Size,
-                         [<<NewPtr:256>> | PtrAcc], [Mem | MemAcc]).
+                         [<<NewPtr:256>> | PtrAcc], [Mem | MemAcc], merge_maps(Maps, Maps1)).
 
 %% -- Value to binary --------------------------------------------------------
 
