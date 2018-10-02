@@ -137,7 +137,7 @@ convert(heap, binary, _Visited, {pmap, _K, _V}, MapId, Heap, BaseAddr) ->
                     end, {[], BaseAddr + 32}, KVs),
     Mem  = lists:reverse(RMem),
     %% Target is binary so no maps required
-    {BaseAddr, {FinalBase - BaseAddr, no_maps(Heap), [<<Size:256>>, Mem]}};
+    {BaseAddr, {no_maps(Heap), FinalBase - BaseAddr, [<<Size:256>>, Mem]}};
 convert(binary, heap, _Visited, {pmap, KeyT, ValT}, Ptr, Heap, _BaseAddr) ->
     Size = get_word(Heap, Ptr),
     Map  = map_binary_to_heap(Size, Heap, Ptr + 32),
