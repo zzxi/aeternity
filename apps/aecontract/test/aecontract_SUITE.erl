@@ -2230,18 +2230,37 @@ sophia_pmaps(_Cfg) ->
     Acc = ?call(new_account, 1000000000),
     Ct  = ?call(create_contract, Acc, primitive_map, 0),
     {} = ?call(call_contract, Acc, Ct, set_remote, {tuple, []}, Ct),
-    FooBar = #{<<"foo">> => <<"bar">>},
-    FooBar = ?call(call_contract, Acc, Ct, return_map, {pmap, string, string}, {}),
+
+    %% Using maps locally
     {Result, _Gas} = ?call(call_contract, Acc, Ct, test, {list, {option, string}}, {}, #{return_gas_used => true}),
     Result = [none,                      none,
               {some,<<"value_of_foo">>}, {some,<<"value_of_bla">>},
               none,                      {some,<<"value_of_bla">>},
               none,                      {some,<<"new_value_of_bla">>}],
+
+    %% Returning maps from contracts
+    FooBar = #{<<"foo">> => <<"bar">>},
+    FooBar = ?call(call_contract, Acc, Ct, return_map, {pmap, string, string}, {}),
+
+    %% Passing maps as contract arguments
     {some, <<"bar">>} = ?call(call_contract, Acc, Ct, argument_map, {option, string}, {{pmap, FooBar}}),
+
+    %% Passing maps between contracts
     FooBarXY = FooBar#{<<"xxx">> => <<"yyy">>},
     FooBarXY = ?call(call_contract, Acc, Ct, remote_insert, {pmap, string, string}, {<<"xxx">>, <<"yyy">>, {pmap, FooBar}}),
     XY       = maps:remove(<<"foo">>, FooBarXY),
     XY       = ?call(call_contract, Acc, Ct, remote_delete, {pmap, string, string}, {<<"foo">>, {pmap, FooBarXY}}),
+
+    %% Storing maps in the state
+    GetState = fun() -> ?call(call_contract, Acc, Ct, get_state_map, {pmap, string, string}, {}) end,
+    Empty = #{},
+    Empty = GetState(),
+    {} = ?call(call_contract, Acc, Ct, insert_state, {tuple, []}, {<<"foo">>, <<"bar">>}),
+    FooBar = GetState(),
+    {} = ?call(call_contract, Acc, Ct, insert_state, {tuple, []}, {<<"xxx">>, <<"yyy">>}),
+    FooBarXY = GetState(),
+    {} = ?call(call_contract, Acc, Ct, delete_state, {tuple, []}, {<<"foo">>}),
+    XY = GetState(),
     ok.
 
 sophia_variant_types(_Cfg) ->

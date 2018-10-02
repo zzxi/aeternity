@@ -53,10 +53,12 @@ store(Address, Value, State) when is_integer(Value) ->
 -spec from_sophia_state(binary()) -> aect_contracts:store().
 from_sophia_state(Data) ->
     %% TODO: less encoding/decoding
-    {ok, {Type}}     = aeso_data:from_binary({tuple, [typerep]},    Data),
-    {ok, {_, Value}} = aeso_data:from_binary({tuple, [word, Type]}, Data),
-    StateData          = aeso_data:to_binary(Value),
-    TypeData           = aeso_data:to_binary(Type),
+    {ok, {Type}}    = aeso_data:from_binary({tuple, [typerep]},    Data),
+    %% Strip the type from the binary (TODO: temporary)
+    <<Ptr:256, Heap/binary>> = Data,
+    <<_:Ptr/unit:8, _:256, Val:256, _/binary>> = Data,
+    {ok, StateData} = aeso_data:binary_to_binary(Type, <<Val:256, Heap/binary>>),
+    TypeData        = aeso_data:to_binary(Type),
     #{ ?SOPHIA_STATE_KEY      => StateData,
        ?SOPHIA_STATE_TYPE_KEY => TypeData }.
 
