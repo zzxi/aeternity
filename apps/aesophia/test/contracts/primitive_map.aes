@@ -1,5 +1,24 @@
 
+contract MapServer =
+
+  function insert : (string, string, pmap(string, string)) => pmap(string, string)
+  function delete : (string, pmap(string, string)) => pmap(string, string)
+
 contract PrimitiveMaps =
+
+  type state = MapServer
+
+  function init(r) = r
+  function set_remote(r) = put(r)
+
+  function insert(k, v, m) : pmap(string, string) = PMap.put(k, v, m)
+  function delete(k, m) : pmap(string, string) = PMap.delete(k, m)
+
+  function remote_insert(k, v, m) =
+    state.insert(k, v, m)
+
+  function remote_delete(k, m) =
+    state.delete(k, m)
 
   function test() =
     let m  = PMap.empty() : pmap(string, string)

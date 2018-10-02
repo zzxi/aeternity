@@ -2228,7 +2228,8 @@ sophia_map_benchmark(Cfg) ->
 sophia_pmaps(_Cfg) ->
     state(aect_test_utils:new_state()),
     Acc = ?call(new_account, 1000000000),
-    Ct  = ?call(create_contract, Acc, primitive_map, {}),
+    Ct  = ?call(create_contract, Acc, primitive_map, 0),
+    {} = ?call(call_contract, Acc, Ct, set_remote, {tuple, []}, Ct),
     FooBar = #{<<"foo">> => <<"bar">>},
     FooBar = ?call(call_contract, Acc, Ct, return_map, {pmap, string, string}, {}),
     {Result, _Gas} = ?call(call_contract, Acc, Ct, test, {list, {option, string}}, {}, #{return_gas_used => true}),
@@ -2237,6 +2238,10 @@ sophia_pmaps(_Cfg) ->
               none,                      {some,<<"value_of_bla">>},
               none,                      {some,<<"new_value_of_bla">>}],
     {some, <<"bar">>} = ?call(call_contract, Acc, Ct, argument_map, {option, string}, {{pmap, FooBar}}),
+    FooBarXY = FooBar#{<<"xxx">> => <<"yyy">>},
+    FooBarXY = ?call(call_contract, Acc, Ct, remote_insert, {pmap, string, string}, {<<"xxx">>, <<"yyy">>, {pmap, FooBar}}),
+    XY       = maps:remove(<<"foo">>, FooBarXY),
+    XY       = ?call(call_contract, Acc, Ct, remote_delete, {pmap, string, string}, {<<"foo">>, {pmap, FooBarXY}}),
     ok.
 
 sophia_variant_types(_Cfg) ->
