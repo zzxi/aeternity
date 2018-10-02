@@ -10,6 +10,8 @@
 
 -export([ map_type/2
         , init_maps/0
+        , next_id/1
+        , merge/2
         , empty/3
         , get/3
         , put/4
@@ -31,6 +33,16 @@
 
 -spec init_maps() -> maps().
 init_maps() -> #maps{}.
+
+-spec next_id(maps()) -> map_id().
+next_id(#maps{next_id = Id}) -> Id.
+
+-spec merge(maps(), state()) -> state().
+merge(NewMaps, State) ->
+    OldMaps = aevm_eeevm_state:maps(State),
+    %% Use next_id from NewMaps
+    Maps = NewMaps#maps{ maps = maps:merge(OldMaps#maps.maps, NewMaps#maps.maps) },
+    aevm_eeevm_state:set_maps(Maps, State).
 
 -spec map_type(map_id(), state()) -> {typerep(), typerep()}.
 map_type(Id, State) ->

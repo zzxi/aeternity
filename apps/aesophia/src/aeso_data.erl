@@ -4,7 +4,7 @@
         , to_binary/2
         , binary_to_words/1
         , from_heap/3
-        , binary_to_heap/3
+        , binary_to_heap/4
         , heap_to_binary/2
         , heap_value/3
         , heap_value/4
@@ -36,22 +36,25 @@
 
 %% -- Manipulating heap values -----------------------------------------------
 
-no_maps()  -> no_maps(0).
 no_maps(N) when is_integer(N) -> #maps{ next_id = N };
 no_maps(#heap{maps = #maps{next_id = N}}) -> no_maps(N).
+
+add_map(Map, #maps{ maps = Maps, next_id = Id }) ->
+    {Id, #maps{ next_id = Id + 1,
+                maps    = Maps#{ Id => Map } }}.
 
 merge_maps(#maps{maps = Maps1}, #maps{maps = Maps2, next_id = N}) ->
     #maps{maps = maps:merge(Maps1, Maps2), next_id = N}.
 
 set_next_id(Heap, N) -> Heap#heap{ maps = Heap#heap.maps#maps{ next_id = N } }.
 
+heap_fragment(Offs, Heap) ->
+    heap_fragment(no_maps(0), Offs, Heap).
+
 heap_fragment(Maps, Offs, Heap) ->
     #heap{maps = Maps, offset = Offs, heap = Heap}.
 
-heap_fragment(Offs, Heap) ->
-    heap_fragment(no_maps(), Offs, Heap).
-
--spec heap_value(aevm_eeevm_maps:maps(), pointer(), binary(), offset()) -> heap_value().
+-spec heap_value(aevm_eeevm_maps:maps() | #maps{}, pointer(), binary(), offset()) -> heap_value().
 heap_value(Maps, Ptr, Heap, Offs) ->
     {Ptr, heap_fragment(Maps, Offs, Heap)}.
 
@@ -73,17 +76,17 @@ heap_value_heap({_, Heap}) -> Heap#heap.heap.
 
 %% -- Binary to heap ---------------------------------------------------------
 
--spec binary_to_heap(Type :: ?Type(), Bin :: binary_value(), Offs :: offset()) ->
+-spec binary_to_heap(Type :: ?Type(), Bin :: binary_value(), NextId :: non_neg_integer(), Offs :: offset()) ->
         {ok, heap_value()} | {error, term()}.
 %% Takes a binary encoded with to_binary/1 and returns a heap fragment starting at Offs.
-binary_to_heap(Type, <<Ptr:32/unit:8, Heap/binary>>, Offs) ->
+binary_to_heap(Type, <<Ptr:32/unit:8, Heap/binary>>, NextId, Offs) ->
     try
-        {Addr, {Maps, _, Mem}} = convert(binary, heap, #{}, Type, Ptr, heap_fragment(32, Heap), Offs),
+        {Addr, {Maps, _, Mem}} = convert(binary, heap, #{}, Type, Ptr, heap_fragment(no_maps(NextId), 32, Heap), Offs),
         {ok, heap_value(Maps, Addr, list_to_binary(Mem), Offs)}
     catch _:Err ->
         {error, {Err, erlang:get_stacktrace()}}
     end;
-binary_to_heap(_Type, <<>>, _Offs) ->
+binary_to_heap(_Type, <<>>, _NextId, _Offs) ->
     {error, binary_too_short}.
 
 %% -- Heap to binary ---------------------------------------------------------
@@ -111,7 +114,8 @@ convert(_, _, _, word, Val, Heap, _) ->
 convert(_, _, _Visited, string, Val, Heap, BaseAddr) ->
     Size  = get_word(Heap, Val),
     Words = 1 + (Size + 31) div 32, %% 1 + ceil(Size / 32)
-    {BaseAddr, {no_maps(Heap), Words * 32, [get_chunk(Heap, Val, Words)]}};
+    Bytes = Words * 32,
+    {BaseAddr, {no_maps(Heap), Bytes, [get_chunk(Heap, Val, Bytes)]}};
 convert(Input, Output, Visited, {list, T}, Val, Heap, BaseAddr) ->
     <<Nil:256>> = <<(-1):256>>,   %% empty list is -1
     case Val of
@@ -134,16 +138,18 @@ convert(heap, binary, _Visited, {pmap, _K, _V}, MapId, Heap, BaseAddr) ->
     Mem  = lists:reverse(RMem),
     %% Target is binary so no maps required
     {BaseAddr, {FinalBase - BaseAddr, no_maps(Heap), [<<Size:256>>, Mem]}};
-convert(binary, heap, _Visited, {pmap, _K, _V}, Val, Heap, _BaseAddr) ->
-    io:format("PMAP BINARY TO HEAP\n"),
-    try exit(ok) catch _:_ -> io:format("~p\n", [erlang:get_stacktrace()]) end,
-    {Val, {no_maps(Heap), 0, []}};
+convert(binary, heap, _Visited, {pmap, KeyT, ValT}, Ptr, Heap, _BaseAddr) ->
+    Size = get_word(Heap, Ptr),
+    Map  = map_binary_to_heap(Size, Heap, Ptr + 32),
+    PMap = #pmap{ key_t = KeyT, val_t = ValT, parent = none, data = Map },
+    {Id, Maps} = add_map(PMap, no_maps(Heap)),
+    {Id, {Maps, 0, []}};
 convert(_, _, _, {tuple, []}, _Ptr, Heap, _BaseAddr) ->
     {0, {no_maps(Heap), 0, []}}; %% Use 0 for the empty tuple (need a unique value).
 convert(Input, Output, Visited, {tuple, Ts}, Ptr, Heap, BaseAddr) ->
     Visited1  = visit(Visited, Ptr),
     BaseAddr1 = BaseAddr + 32 * length(Ts),  %% store component data after the tuple cell
-    Ptrs      = [ P || <<P:256>> <= get_chunk(Heap, Ptr, length(Ts)) ],
+    Ptrs      = [ P || <<P:256>> <= get_chunk(Heap, Ptr, 32 * length(Ts)) ],
     {BaseAddr2, Maps, NewPtrs, Memory} = convert_components(Input, Output, Visited1, Ts, Ptrs, Heap, BaseAddr1),
     {BaseAddr, {Maps, BaseAddr2 - BaseAddr, [NewPtrs, Memory]}};
 convert(Input, Output, Visited, {variant, Cs}, Ptr, Heap, BaseAddr) ->
@@ -324,7 +330,7 @@ from_binary(Visited, {variant_t, TCons}, Heap, V) ->   %% Tagged variants
 from_binary(_Visited, {pmap, A, B}, Heap, Ptr) ->
     %% FORMAT: [Size] [KeySize] Key [ValSize] Val .. [KeySize] Key [ValSize] Val
     Size = heap_word(Heap, Ptr),
-    map_from_binary(A, B, Size, Heap, Ptr + 32);
+    map_binary_to_value(A, B, Size, Heap, Ptr + 32);
 from_binary(Visited, {map, A, B}, Heap, V) ->
     maps:from_list(from_binary(Visited, {list, {tuple, [A, B]}}, Heap, V));
 from_binary(Visited, typerep, Heap, V) ->
@@ -342,23 +348,36 @@ from_binary(Visited, typerep, Heap, V) ->
         ?TYPEREP_MAP_TAG     -> {pmap,    Arg(typerep), Arg1(typerep, 2)}
     end.
 
-map_from_binary(KeyType, ValType, N, Heap, Ptr) ->
+map_binary_to_value(KeyType, ValType, N, Bin, Ptr) ->
     %% Avoid looping on bogus sizes
-    MaxN = byte_size(Heap) div 64,
-    map_from_binary(KeyType, ValType, min(N, MaxN), Heap, Ptr, #{}).
+    MaxN = byte_size(Bin) div 64,
+    Heap = heap_fragment(0, Bin),
+    map_from_binary({value, KeyType, ValType}, min(N, MaxN), Heap, Ptr, #{}).
 
-map_from_binary(_, _, 0, _, _, Map) -> Map;
-map_from_binary(KeyType, ValType, I, Heap, Ptr, Map) ->
-    KeySize = heap_word(Heap, Ptr),
+map_binary_to_heap(N, Heap, Ptr) ->
+    %% Avoid looping on bogus sizes
+    MaxN = byte_size(Heap#heap.heap) div 64,
+    map_from_binary(heap, min(N, MaxN), Heap, Ptr, #{}).
+
+map_from_binary(_, 0, _, _, Map) -> Map;
+map_from_binary(Output, I, Heap, Ptr, Map) ->
+    KeySize = get_word(Heap, Ptr),
     KeyPtr  = Ptr + 32,
-    KeyBin  = heap_chunk(Heap, KeyPtr, KeySize),
-    ValSize = heap_word(Heap, KeyPtr + KeySize),
+    KeyBin  = get_chunk(Heap, KeyPtr, KeySize),
+    ValSize = get_word(Heap, KeyPtr + KeySize),
     ValPtr  = KeyPtr + KeySize + 32,
-    ValBin  = heap_chunk(Heap, ValPtr, ValSize),
-    %% Keys and values are self contained binaries
-    {ok, Key} = from_binary(KeyType, KeyBin),
-    {ok, Val} = from_binary(ValType, ValBin),
-    map_from_binary(KeyType, ValType, I - 1, Heap, ValPtr + ValSize, Map#{Key => Val}).
+    ValBin  = get_chunk(Heap, ValPtr, ValSize),
+    Map1    =
+        case Output of
+            {value, KeyType, ValType} ->
+                %% Keys and values are self contained binaries
+                {ok, Key} = from_binary(KeyType, KeyBin),
+                {ok, Val} = from_binary(ValType, ValBin),
+                Map#{Key => Val};
+            heap ->
+                Map#{KeyBin => ValBin}
+        end,
+    map_from_binary(Output, I - 1, Heap, ValPtr + ValSize, Map1).
 
 visit(Visited, V) ->
     check_circular_refs(Visited, V),
@@ -375,11 +394,6 @@ heap_word(Heap,Addr) ->
     <<_:BitSize,W:256,_/binary>> = Heap,
     W.
 
-heap_chunk(Heap, Addr, Bytes) ->
-    BitOffs = 8 * Addr,
-    <<_:BitOffs, Chunk:Bytes/binary, _/binary>> = Heap,
-    Chunk.
-
 -spec get_word(heap_fragment(), pointer()) -> word().
 get_word(#heap{offset = Offs, heap = Mem}, Addr) when Addr >= Offs ->
     BitOffs = (Addr - Offs) * 8,
@@ -387,9 +401,8 @@ get_word(#heap{offset = Offs, heap = Mem}, Addr) when Addr >= Offs ->
     Word.
 
 -spec get_chunk(heap_fragment(), pointer(), non_neg_integer()) -> binary().
-get_chunk(#heap{offset = Offs, heap = Mem}, Addr, Words) when Addr >= Offs ->
+get_chunk(#heap{offset = Offs, heap = Mem}, Addr, Bytes) when Addr >= Offs ->
     BitOffs = (Addr - Offs) * 8,
-    Bytes   = Words * 32,
     <<_:BitOffs, Chunk:Bytes/binary, _/binary>> = Mem,
     Chunk.
 
