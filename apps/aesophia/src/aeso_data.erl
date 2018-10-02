@@ -5,6 +5,7 @@
         , binary_to_words/1
         , from_heap/3
         , binary_to_heap/4
+        , heap_to_heap/4
         , heap_to_binary/2
         , heap_value/3
         , heap_value/4
@@ -101,6 +102,19 @@ heap_to_binary(Type, {Ptr, Heap}) ->
         {error, {Err, erlang:get_stacktrace()}}
     end.
 
+%% -- Heap to heap -----------------------------------------------------------
+
+%% Used for the state
+-spec heap_to_heap(Type :: ?Type(), Heap :: heap_value(), NextId :: non_neg_integer(), Offs :: offset()) ->
+        {ok, heap_value()} | {error, term()}.
+heap_to_heap(Type, {Ptr, Heap}, NextId, Offs) ->
+    try
+        {Addr, {Maps, _, Mem}} = convert(heap, heap, #{}, Type, Ptr, set_next_id(NextId, Heap), Offs),
+        {ok, heap_value(Maps, Addr, list_to_binary(Mem), Offs)}
+    catch _:Err ->
+        {error, {Err, erlang:get_stacktrace()}}
+    end.
+
 %% -- Generic heap/binary conversion -----------------------------------------
 
 -type visited() :: #{pointer() => true}.
@@ -122,8 +136,8 @@ convert(Input, Output, Visited, {list, T}, Val, Heap, BaseAddr) ->
         Nil -> {Nil, {no_maps(Heap), 0, []}};
         _   -> convert(Input, Output, Visited, {tuple, [T, {list, T}]}, Val, Heap, BaseAddr)
     end;
-convert(heap, binary, _Visited, {pmap, _K, _V}, MapId, Heap, BaseAddr) ->
-    #{ MapId := Map } = Heap#heap.maps#maps.maps,
+convert(Input, binary, _Visited, {pmap, KeyT, ValT}, MapId, Heap, BaseAddr) ->
+    Map = convert_map(Input, KeyT, ValT, MapId, Heap),
     %% TODO: deal with stored maps and tombstones
     KVs  = maps:to_list(Map#pmap.data),
     Size = maps:size(Map#pmap.data),
@@ -138,10 +152,8 @@ convert(heap, binary, _Visited, {pmap, _K, _V}, MapId, Heap, BaseAddr) ->
     Mem  = lists:reverse(RMem),
     %% Target is binary so no maps required
     {BaseAddr, {no_maps(Heap), FinalBase - BaseAddr, [<<Size:256>>, Mem]}};
-convert(binary, heap, _Visited, {pmap, KeyT, ValT}, Ptr, Heap, _BaseAddr) ->
-    Size = get_word(Heap, Ptr),
-    Map  = map_binary_to_heap(Size, Heap, Ptr + 32),
-    PMap = #pmap{ key_t = KeyT, val_t = ValT, parent = none, data = Map },
+convert(Input, heap, _Visited, {pmap, KeyT, ValT}, Ptr, Heap, _BaseAddr) ->
+    PMap = convert_map(Input, KeyT, ValT, Ptr, Heap),
     {Id, Maps} = add_map(PMap, no_maps(Heap)),
     {Id, {Maps, 0, []}};
 convert(_, _, _, {tuple, []}, _Ptr, Heap, _BaseAddr) ->
@@ -178,6 +190,14 @@ convert_components(Input, Output, Visited, [T | Ts], [Ptr | Ptrs], Heap, BaseAdd
     {NewPtr, {Maps1, Size, Mem}} = convert(Input, Output, Visited, T, Ptr, Heap1, BaseAddr),
     convert_components(Input, Output, Visited, Ts, Ptrs, Heap, BaseAddr + Size,
                          [<<NewPtr:256>> | PtrAcc], [Mem | MemAcc], merge_maps(Maps, Maps1)).
+
+convert_map(heap, _KeyT, _ValT, MapId, Heap) ->
+    #{ MapId := Map } = Heap#heap.maps#maps.maps,
+    Map;
+convert_map(binary, KeyT, ValT, Ptr, Heap) ->
+    Size = get_word(Heap, Ptr),
+    Map  = map_binary_to_heap(Size, Heap, Ptr + 32),
+    #pmap{ key_t = KeyT, val_t = ValT, parent = none, data = Map }.
 
 %% -- Value to binary --------------------------------------------------------
 
