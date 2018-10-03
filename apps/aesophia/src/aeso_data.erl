@@ -163,7 +163,7 @@ convert(Input, Output, Store, Visited, {list, T}, Val, Heap, BaseAddr) ->
 convert(Input, binary, Store, _Visited, {pmap, KeyT, ValT}, MapId, Heap, BaseAddr) ->
     Map0 = convert_map(Input, KeyT, ValT, MapId, Heap),
     %% Will be a no-op if Input == binary
-    Map  = aevm_eeevm_maps:flatten_map(Store, Heap#heap.maps, MapId, Map0),
+    Map  = aevm_eeevm_maps:flatten_map(Store, MapId, Map0),
     KVs  = maps:to_list(Map#pmap.data),
     Size = maps:size(Map#pmap.data),
     {RMem, FinalBase} =
@@ -177,24 +177,15 @@ convert(Input, binary, Store, _Visited, {pmap, KeyT, ValT}, MapId, Heap, BaseAdd
     Mem  = lists:reverse(RMem),
     %% Target is binary so no maps required
     {BaseAddr, {no_maps(Heap), FinalBase - BaseAddr, [<<Size:256>>, Mem]}};
-convert(Input, heap, Store, Visited, {pmap, KeyT, ValT}, Ptr, Heap, BaseAddr) ->
-    PMap = convert_map(Input, KeyT, ValT, Ptr, Heap),
-    %% Chase parents!
-    {NewParent, ParentMaps} =
-        case PMap#pmap.parent of
-            none -> {none, no_maps(Heap)};
-            PId  ->
-                {NewPId, {PMaps, _, _}} = convert(Input, heap, Store, Visited, {pmap, KeyT, ValT},
-                                                  PId, Heap, BaseAddr),
-                {NewPId, PMaps}
-        end,
-    PMap1 = PMap#pmap{ parent = NewParent },
-    case PMap1#pmap.data of
+convert(Input, heap, _Store, _Visited, {pmap, KeyT, ValT}, Ptr, Heap, _BaseAddr) ->
+    PMap   = convert_map(Input, KeyT, ValT, Ptr, Heap),
+    NoMaps = no_maps(Heap),
+    case PMap#pmap.data of
         stored -> %% Keep the id of stored maps (only possible if Input == heap)
-            Maps = ParentMaps#maps{ maps = (ParentMaps#maps.maps)#{ Ptr => PMap1 } },
+            Maps = NoMaps#maps{ maps = #{ Ptr => PMap } },
             {Ptr, {Maps, 0, []}};
         _ ->
-            {Id, Maps} = add_map(PMap1, ParentMaps),
+            {Id, Maps} = add_map(PMap, NoMaps),
             {Id, {Maps, 0, []}}
     end;
 convert(_, _, _, _, {tuple, []}, _Ptr, Heap, _BaseAddr) ->

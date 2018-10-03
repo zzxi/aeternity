@@ -16,7 +16,7 @@
         , get/3
         , put/4
         , delete/3
-        , flatten_map/4
+        , flatten_map/3
         ]).
 
 -include_lib("aesophia/src/aeso_data.hrl").
@@ -104,14 +104,13 @@ update(Id, Key, Val, State) ->
 %% Follow parent pointers and collapse tombstones.
 %% Postcondition: parent == none and no tombstones in values.
 %% Use when converting to binary.
--spec flatten_map(aect_contracts:store(), maps(), map_id(), pmap()) -> pmap().
-flatten_map(Store, Maps, MapId, Map) ->
+-spec flatten_map(aect_contracts:store(), map_id(), pmap()) -> pmap().
+flatten_map(Store, MapId, Map) ->
     ParentMap =
         case Map#pmap.parent of
             none   -> #{};
-            Parent ->
-                #{ Parent := PMap } = Maps#maps.maps,
-                (flatten_map(Store, Maps, Parent, PMap))#pmap.data
+            Parent ->   %% All parents are in the store
+                aevm_eeevm_store:get_map_data(Parent, Store)
         end,
     Delta =
         case Map#pmap.data of

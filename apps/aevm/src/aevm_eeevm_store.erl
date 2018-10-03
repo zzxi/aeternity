@@ -83,22 +83,26 @@ set_sophia_state(Value, Store) ->
     store_maps(Maps, Store#{?SOPHIA_STATE_KEY => <<Ptr:256, Mem/binary>>}).
 
 store_maps(Maps0, Store) ->
+    Maps       = maps:to_list(Maps0#maps.maps),
+    OldMapKeys = [ Id || <<Id:256>> <= maps:get(?SOPHIA_STATE_MAPS_KEY, Store, <<>>) ],
+    NewMapKeys = lists:usort(lists:append([ [Id | [P || P /= none]]
+                                            || {Id, #pmap{parent = P}} <- Maps ])),
+    Garbage    = OldMapKeys -- NewMapKeys,
+
     %% No need to store already stored maps
-    Maps       = [ {Id, aevm_eeevm_maps:flatten_map(Store, Maps0, Id, M)}
-                    || {Id, M = #pmap{ data = D }} <- maps:to_list(Maps0#maps.maps), D /= stored ],
-    OldMapKeys = maps:get(?SOPHIA_STATE_MAPS_KEY, Store, <<>>),
-    NewMapKeys = << <<MapId:256>> || {MapId, _} <- Maps >>,
+    NewMaps    = [ {Id, aevm_eeevm_maps:flatten_map(Store, Id, M)}
+                    || {Id, M = #pmap{ data = D }} <- Maps, D /= stored ],
 
     MapInfo = maps:from_list(
         [ {<<MapId:256>>, aeso_data:to_binary({Map#pmap.key_t, Map#pmap.val_t})}
-          || {MapId, Map} <- Maps ]),
+          || {MapId, Map} <- NewMaps ]),
     MapData = maps:from_list(
         [ {<<MapId:256, Key/binary>>, Val}
-          || {MapId, #pmap{data = Map}} <- Maps,
+          || {MapId, #pmap{data = Map}} <- NewMaps,
              {Key, Val} <- maps:to_list(Map) ]),
 
     maps:merge(
-        Store#{ ?SOPHIA_STATE_MAPS_KEY => <<OldMapKeys/binary, NewMapKeys/binary>> },
+        Store#{ ?SOPHIA_STATE_MAPS_KEY => << <<Id:256>> || Id <- NewMapKeys >> },
         maps:merge(MapInfo, MapData)).
 
 -spec get_sophia_state(aect_contracts:store()) -> aeso_data:heap_value().
@@ -133,7 +137,7 @@ get_map_data(MapId, Store) ->
 
 -spec next_map_id(aect_contracts:store()) -> aevm_eeevm_maps:map_id().
 next_map_id(#{?SOPHIA_STATE_MAPS_KEY := MapKeys}) ->
-    byte_size(MapKeys) div 32;
+    1 + lists:max([-1 | [ Id || <<Id:256>> <= MapKeys ]]);
 next_map_id(_) -> 0.
 
 is_valid_key(?AEVM_01_Sophia_01, ?SOPHIA_STATE_KEY)      -> true;
