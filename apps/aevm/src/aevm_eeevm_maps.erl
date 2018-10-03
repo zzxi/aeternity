@@ -22,7 +22,7 @@
 
 -export_type([map_id/0, maps/0]).
 
--opaque maps() :: #maps{}.
+-type maps() :: #maps{}.
 
 -type state()   :: state().
 -type map_id()  :: non_neg_integer().

@@ -25,7 +25,7 @@
 -include("aeso_icode.hrl").
 -include("aeso_data.hrl").
 
--record(heap, { maps   :: #maps{} | aevm_eeevm_maps:maps(), %% There are really the same
+-record(heap, { maps   :: #maps{},
                 offset :: offset(),
                 heap   :: binary() }).
 
