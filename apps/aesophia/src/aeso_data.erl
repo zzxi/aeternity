@@ -86,7 +86,8 @@ binary_to_heap(Type, <<Ptr:32/unit:8, Heap/binary>>, NextId, Offs) ->
         {Addr, {Maps, _, Mem}} = convert(binary, heap, #{}, Type, Ptr, heap_fragment(no_maps(NextId), 32, Heap), Offs),
         {ok, heap_value(Maps, Addr, list_to_binary(Mem), Offs)}
     catch _:Err ->
-        {error, {Err, erlang:get_stacktrace()}}
+        io:format("** Error: binary_to_heap failed with ~p\n  ~p\n", [Err, erlang:get_stacktrace()]),
+        {error, Err}
     end;
 binary_to_heap(_Type, <<>>, _NextId, _Offs) ->
     {error, binary_too_short}.
@@ -100,7 +101,8 @@ heap_to_binary(Type, {Ptr, Heap}) ->
         {Addr, {_, _, Memory}} = convert(heap, binary, #{}, Type, Ptr, Heap, 32),
         {ok, <<Addr:256, (list_to_binary(Memory))/binary>>}
     catch _:Err ->
-        {error, {Err, erlang:get_stacktrace()}}
+        io:format("** Error: heap_to_binary failed with ~p\n  ~p\n", [Err, erlang:get_stacktrace()]),
+        {error, Err}
     end.
 
 %% -- Binary to binary -------------------------------------------------------
@@ -112,7 +114,8 @@ binary_to_binary(Type, <<Ptr:32/unit:8, Heap/binary>>) ->
         {Addr, {_, _, Memory}} = convert(binary, binary, #{}, Type, Ptr, heap_fragment(no_maps(0), 32, Heap), 32),
         {ok, <<Addr:256, (list_to_binary(Memory))/binary>>}
     catch _:Err ->
-        {error, {Err, erlang:get_stacktrace()}}
+        io:format("** Error: binary_to_binary failed with ~p\n  ~p\n", [Err, erlang:get_stacktrace()]),
+        {error, Err}
     end.
 
 %% -- Heap to heap -----------------------------------------------------------
@@ -125,7 +128,8 @@ heap_to_heap(Type, {Ptr, Heap}, NextId, Offs) ->
         {Addr, {Maps, _, Mem}} = convert(heap, heap, #{}, Type, Ptr, set_next_id(NextId, Heap), Offs),
         {ok, heap_value(Maps, Addr, list_to_binary(Mem), Offs)}
     catch _:Err ->
-        {error, {Err, erlang:get_stacktrace()}}
+        io:format("** Error: heap_to_heap failed with ~p\n  ~p\n", [Err, erlang:get_stacktrace()]),
+        {error, Err}
     end.
 
 %% -- Generic heap/binary conversion -----------------------------------------
