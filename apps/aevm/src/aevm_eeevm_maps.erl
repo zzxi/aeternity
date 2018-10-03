@@ -16,6 +16,7 @@
         , get/3
         , put/4
         , delete/3
+        , flatten_map/4
         ]).
 
 -include_lib("aesophia/src/aeso_data.hrl").
@@ -99,6 +100,34 @@ update(Id, Key, Val, State) ->
         stored -> %% not yet implemented
             add_map(Map#pmap{ parent = Id, data = #{Key => Val} }, State)
     end.
+
+%% Follow parent pointers and collapse tombstones.
+%% Postcondition: parent == none and no tombstones in values.
+%% Use when converting to binary.
+-spec flatten_map(aect_contracts:store(), maps(), map_id(), pmap()) -> pmap().
+flatten_map(Store, Maps, MapId, Map) ->
+    ParentMap =
+        case Map#pmap.parent of
+            none   -> #{};
+            Parent ->
+                #{ Parent := PMap } = Maps#maps.maps,
+                (flatten_map(Store, Maps, Parent, PMap))#pmap.data
+        end,
+    Delta =
+        case Map#pmap.data of
+            stored -> aevm_eeevm_store:get_map_data(MapId, Store);
+            D      -> D
+        end,
+    Data =
+        case Map#pmap.parent of
+            none -> Delta;   %% No parent means no tombstones
+            _ ->
+                lists:foldl(fun({Key, tombstone}, M) -> maps:remove(Key, M);
+                               ({Key, Val},       M) -> M#{ Key => Val }
+                            end, ParentMap, maps:to_list(Delta))
+        end,
+    Map#pmap{ parent = none, data = Data }.
+
 
 %% -- Internal functions -----------------------------------------------------
 

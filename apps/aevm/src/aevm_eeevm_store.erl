@@ -17,6 +17,8 @@
         , from_sophia_state/1
         , set_sophia_state/2
         , is_valid_key/2
+        , get_map_data/2
+        , next_map_id/1
         ]).
 
 -include("aevm_eeevm.hrl").
@@ -59,24 +61,14 @@ from_sophia_state(Data) ->
     %% Strip the type from the binary (TODO: temporary)
     Data1 = second_component(Data),
     {ok, StateValue} = aeso_data:binary_to_heap(Type, Data1, 0, 32),
-    Maps = maps:to_list((aeso_data:heap_value_maps(StateValue))#maps.maps),
-    Mem  = aeso_data:heap_value_heap(StateValue),
-    Ptr  = aeso_data:heap_value_pointer(StateValue),
-    TypeData = aeso_data:to_binary(Type),
+    Maps      = maps:to_list((aeso_data:heap_value_maps(StateValue))#maps.maps),
+    TypeData  = aeso_data:to_binary(Type),
+    Mem       = aeso_data:heap_value_heap(StateValue),
+    Ptr       = aeso_data:heap_value_pointer(StateValue),
     StateData = <<Ptr:256, Mem/binary>>,
-    MapKeys = << <<MapId:256>> || {MapId, _} <- Maps >>,
-    MapInfo = maps:from_list(
-        [ {<<MapId:256>>, aeso_data:to_binary({Map#pmap.key_t, Map#pmap.val_t, parent_to_word(Map#pmap.parent)})}
-          || {MapId, Map} <- Maps ]),
-    MapData = maps:from_list(
-        [ {<<MapId:256, Key/binary>>, Val}
-          || {MapId, #pmap{data = Map}} <- Maps,
-             {Key, Val} <- maps:to_list(Map) ]),
-    maps:merge(
+    store_maps(Maps,
         #{ ?SOPHIA_STATE_KEY      => StateData,
-           ?SOPHIA_STATE_TYPE_KEY => TypeData,
-           ?SOPHIA_STATE_MAPS_KEY => MapKeys },
-        maps:merge(MapInfo, MapData)).
+           ?SOPHIA_STATE_TYPE_KEY => TypeData }).
 
 %% TODO: Temporary hack to drop the first component (the typerep) from the initial state.
 -spec second_component(aeso_data:binary_value()) -> aeso_data:binary_value().
@@ -84,10 +76,32 @@ second_component(<<Ptr:256, Heap/binary>> = Data) ->
     <<_:Ptr/unit:8, _:256, Snd:256, _/binary>> = Data,
     <<Snd:256, Heap/binary>>.
 
--spec set_sophia_state(binary(), aect_contracts:store()) -> aect_contracts:store().
-set_sophia_state(Data, Store) ->
-    %% TODO
-    Store#{?SOPHIA_STATE_KEY => Data}.
+-spec set_sophia_state(aeso_data:heap_value(), aect_contracts:store()) -> aect_contracts:store().
+set_sophia_state(Value, Store) ->
+    Ptr = aeso_data:heap_value_pointer(Value),
+    Mem = aeso_data:heap_value_heap(Value),
+    Maps = aeso_data:heap_value_maps(Value),
+    store_maps(maps:to_list(Maps#maps.maps),
+               Store#{?SOPHIA_STATE_KEY => <<Ptr:256, Mem/binary>>}).
+
+store_maps(Maps0, Store) ->
+    %% No need to store already stored maps
+    Maps       = [ M || M = {_, #pmap{ data = D }} <- Maps0, D /= stored ],
+    OldMapKeys = maps:get(?SOPHIA_STATE_MAPS_KEY, Store, <<>>),
+    NewMapKeys = << <<MapId:256>> || {MapId, _} <- Maps >>,
+
+    MapInfo = maps:from_list(
+        [ {<<MapId:256>>, aeso_data:to_binary({Map#pmap.key_t, Map#pmap.val_t, parent_to_word(Map#pmap.parent)})}
+          || {MapId, Map} <- Maps ]),
+    Tombstone = fun(tombstone) -> <<0>>; (Val) -> Val end,
+    MapData = maps:from_list(
+        [ {<<MapId:256, Key/binary>>, Tombstone(Val)}
+          || {MapId, #pmap{data = Map}} <- Maps,
+             {Key, Val} <- maps:to_list(Map) ]),
+
+    maps:merge(
+        Store#{ ?SOPHIA_STATE_MAPS_KEY => <<OldMapKeys/binary, NewMapKeys/binary>> },
+        maps:merge(MapInfo, MapData)).
 
 -spec get_sophia_state(aect_contracts:store()) -> aeso_data:heap_value().
 get_sophia_state(Store) ->
@@ -121,6 +135,21 @@ get_sophia_state_type(Store) ->
             {ok, Type} = aeso_data:from_binary(typerep, Bin),
             Type
     end.
+
+-spec get_map_data(aevm_eeevm_maps:map_id(), aect_contracts:store()) -> #{binary() => binary() | tombstone}.
+get_map_data(MapId, Store) ->
+    MkVal = fun(<<0>>) -> tombstone; (V) -> V end,
+    %% Inefficient!
+    Res = maps:from_list(
+        [ {Key, MkVal(Val)}
+         || {<<MapId1:256, Key/binary>>, Val} <- maps:to_list(Store),
+            MapId1 == MapId, Key /= <<>> ]),
+    Res.
+
+-spec next_map_id(aect_contracts:store()) -> aevm_eeevm_maps:map_id().
+next_map_id(#{?SOPHIA_STATE_MAPS_KEY := MapKeys}) ->
+    byte_size(MapKeys) div 32;
+next_map_id(_) -> 0.
 
 is_valid_key(?AEVM_01_Sophia_01, ?SOPHIA_STATE_KEY)      -> true;
 is_valid_key(?AEVM_01_Sophia_01, ?SOPHIA_STATE_TYPE_KEY) -> true;

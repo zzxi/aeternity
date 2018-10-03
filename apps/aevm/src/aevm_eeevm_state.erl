@@ -72,6 +72,8 @@
 -include_lib("aebytecode/include/aeb_opcodes.hrl").
 -include("aevm_eeevm.hrl").
 
+-define(stacktrace, try exit(stacktrace) catch _:_ -> erlang:get_stacktrace() end).
+
 -type state() :: map().
 
 -export_type([state/0]).
@@ -155,27 +157,35 @@ init_vm(State, Code, Mem, Store) ->
         ?AEVM_01_Solidity_01 ->
             aevm_eeevm_store:init(Store, State1);
         ?AEVM_01_Sophia_01 ->
-            %% Write calldata at address 32 and put the pointer to the value on the stack.
+            %% We need to import the state first, since the map ids in the store are fixed.
+            State2 = import_state_from_store(Store, State1),
+            %% Next we write the calldata on top of the heap and put a pointer
+            %% to it on the stack.
             Calldata = data(State1),
             %% Calldata can contain maps, so we can't simply write it
             %% to memory. The calldata should be a pair of a typerep
             %% and the actual calldata.
+            HeapSize   = aevm_eeevm_memory:size_in_words(State2) * 32,
             {ok, {Type}} = aeso_data:from_binary({tuple, [typerep]}, Calldata),
             {ok, CalldataHeap} = aeso_data:binary_to_heap({tuple, [typerep, Type]}, Calldata,
-                                                          aevm_eeevm_maps:next_id(maps(State)), 32),
-            {Ptr, State2} = write_heap_value(CalldataHeap, State1),
-            State3 = aevm_eeevm_stack:push(Ptr, State2),
-            %% Write the state on top of it
-            case aevm_eeevm_store:get_sophia_state_type(Store) of
-                false -> State3;  %% No state yet (init function)
-                StateType ->
-                    Addr       = byte_size(aeso_data:heap_value_heap(CalldataHeap)) + 32,
-                    StateValue = aevm_eeevm_store:get_sophia_state(Store),
-                    {ok, StateValue1} = aeso_data:heap_to_heap(StateType, StateValue,
-                                                               aevm_eeevm_maps:next_id(maps(State3)), Addr),
-                    {StatePtr, State4} = write_heap_value(StateValue1, State3),
-                    aevm_eeevm_memory:store(0, StatePtr, State4)
-            end
+                                                          aevm_eeevm_maps:next_id(maps(State2)), HeapSize),
+            {Ptr, State3} = write_heap_value(CalldataHeap, State2),
+            aevm_eeevm_stack:push(Ptr, State3)
+    end.
+
+get_store(#{chain_api := ChainAPI, chain_state := ChainState}) ->
+    ChainAPI:get_store(ChainState).
+
+import_state_from_store(Store, State) ->
+    case aevm_eeevm_store:get_sophia_state_type(Store) of
+        false -> State;  %% No state yet (init function)
+        StateType ->
+            NextId     = aevm_eeevm_store:next_map_id(Store),
+            Addr       = 32,
+            StateValue = aevm_eeevm_store:get_sophia_state(Store),
+            {ok, StateValue1} = aeso_data:heap_to_heap(StateType, Store, StateValue, NextId, Addr),
+            {StatePtr, State1} = write_heap_value(StateValue1, State),
+            aevm_eeevm_memory:store(0, StatePtr, State1)
     end.
 
 do_return(Us0, Us1, State) ->
@@ -186,7 +196,7 @@ do_return(Us0, Us1, State) ->
             %% Us1 is a pointer to the actual value.
             Heap       = get_heap(State),
             {ok, Type} = aeso_data:from_heap(typerep, Heap, Us0),
-            {ok, Out}  = aeso_data:heap_to_binary(Type, aeso_data:heap_value(maps(State), Us1, Heap)),
+            {ok, Out}  = aeso_data:heap_to_binary(Type, get_store(State), aeso_data:heap_value(maps(State), Us1, Heap)),
             set_out(Out, State)
             catch _:_ ->
                 io:format("** Error reading return value\n~s", [format_mem(mem(State))]),
@@ -239,9 +249,11 @@ save_store(#{ chain_state := ChainState
                         Heap         = get_heap(State),
                         {ok, Type}   = aeso_data:from_heap(typerep, Heap, TypePtr),
                         {Ptr, _}     = aevm_eeevm_memory:load(Addr, State),
-                        {ok, Data}   = aeso_data:heap_to_binary(Type, aeso_data:heap_value(maps(State), Ptr, Heap)),
-                        Store        = ChainAPI:get_store(ChainState),
-                        Store1       = aevm_eeevm_store:set_sophia_state(Data, Store),
+                        Store        = get_store(State),
+                        NextId       = aevm_eeevm_store:next_map_id(Store),
+                        StateValue   = aeso_data:heap_value(maps(State), Ptr, Heap),
+                        {ok, StateValue1} = aeso_data:heap_to_heap(Type, Store, StateValue, NextId, 32),
+                        Store1       = aevm_eeevm_store:set_sophia_state(StateValue1, Store),
                         State#{ chain_state => ChainAPI:set_store(Store1, ChainState) }
                 end
             catch _:_ ->
@@ -269,7 +281,8 @@ get_contract_call_input(IOffset, ISize, State) ->
             PairPtr   = 32 * aevm_eeevm_memory:size_in_words(State),
             TmpState  = aevm_eeevm_memory:write_area(PairPtr, <<TypePtr:256, Ptr:256>>, State),
             TmpHeap   = get_heap(TmpState),
-            {ok, Arg} = aeso_data:heap_to_binary({tuple, [typerep, Type]}, aeso_data:heap_value(maps(TmpState), PairPtr, TmpHeap)),
+            {ok, Arg} = aeso_data:heap_to_binary({tuple, [typerep, Type]}, get_store(TmpState),
+                                                 aeso_data:heap_value(maps(TmpState), PairPtr, TmpHeap)),
             {Arg, State}
     end.
 
