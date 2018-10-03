@@ -125,7 +125,7 @@ binary_to_binary(Type, <<Ptr:32/unit:8, Heap/binary>>) ->
         {ok, heap_value()} | {error, term()}.
 heap_to_heap(Type, {Ptr, Heap}, NextId, Offs) ->
     try
-        {Addr, {Maps, _, Mem}} = convert(heap, heap, #{}, Type, Ptr, set_next_id(NextId, Heap), Offs),
+        {Addr, {Maps, _, Mem}} = convert(heap, heap, #{}, Type, Ptr, set_next_id(Heap, NextId), Offs),
         {ok, heap_value(Maps, Addr, list_to_binary(Mem), Offs)}
     catch _:Err ->
         io:format("** Error: heap_to_heap failed with ~p\n  ~p\n", [Err, erlang:get_stacktrace()]),
