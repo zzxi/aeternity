@@ -61,12 +61,11 @@ from_sophia_state(Data) ->
     %% Strip the type from the binary (TODO: temporary)
     Data1 = second_component(Data),
     {ok, StateValue} = aeso_data:binary_to_heap(Type, Data1, 0, 32),
-    Maps      = maps:to_list((aeso_data:heap_value_maps(StateValue))#maps.maps),
     TypeData  = aeso_data:to_binary(Type),
     Mem       = aeso_data:heap_value_heap(StateValue),
     Ptr       = aeso_data:heap_value_pointer(StateValue),
     StateData = <<Ptr:256, Mem/binary>>,
-    store_maps(Maps,
+    store_maps(aeso_data:heap_value_maps(StateValue),
         #{ ?SOPHIA_STATE_KEY      => StateData,
            ?SOPHIA_STATE_TYPE_KEY => TypeData }).
 
@@ -81,21 +80,20 @@ set_sophia_state(Value, Store) ->
     Ptr = aeso_data:heap_value_pointer(Value),
     Mem = aeso_data:heap_value_heap(Value),
     Maps = aeso_data:heap_value_maps(Value),
-    store_maps(maps:to_list(Maps#maps.maps),
-               Store#{?SOPHIA_STATE_KEY => <<Ptr:256, Mem/binary>>}).
+    store_maps(Maps, Store#{?SOPHIA_STATE_KEY => <<Ptr:256, Mem/binary>>}).
 
 store_maps(Maps0, Store) ->
     %% No need to store already stored maps
-    Maps       = [ M || M = {_, #pmap{ data = D }} <- Maps0, D /= stored ],
+    Maps       = [ {Id, aevm_eeevm_maps:flatten_map(Store, Maps0, Id, M)}
+                    || {Id, M = #pmap{ data = D }} <- maps:to_list(Maps0#maps.maps), D /= stored ],
     OldMapKeys = maps:get(?SOPHIA_STATE_MAPS_KEY, Store, <<>>),
     NewMapKeys = << <<MapId:256>> || {MapId, _} <- Maps >>,
 
     MapInfo = maps:from_list(
-        [ {<<MapId:256>>, aeso_data:to_binary({Map#pmap.key_t, Map#pmap.val_t, parent_to_word(Map#pmap.parent)})}
+        [ {<<MapId:256>>, aeso_data:to_binary({Map#pmap.key_t, Map#pmap.val_t})}
           || {MapId, Map} <- Maps ]),
-    Tombstone = fun(tombstone) -> <<0>>; (Val) -> Val end,
     MapData = maps:from_list(
-        [ {<<MapId:256, Key/binary>>, Tombstone(Val)}
+        [ {<<MapId:256, Key/binary>>, Val}
           || {MapId, #pmap{data = Map}} <- Maps,
              {Key, Val} <- maps:to_list(Map) ]),
 
@@ -110,22 +108,10 @@ get_sophia_state(Store) ->
     Maps = maps:from_list(
         [ begin
               Bin = maps:get(<<MapId:256>>, Store),
-              {ok, {KeyT, ValT, ParentWord}} = aeso_data:from_binary({tuple, [typerep, typerep, word]}, Bin),
-              Parent = word_to_parent(ParentWord),
-              {MapId, #pmap{ key_t = KeyT, val_t = ValT, parent = Parent, data = stored }}
+              {ok, {KeyT, ValT}} = aeso_data:from_binary({tuple, [typerep, typerep]}, Bin),
+              {MapId, #pmap{ key_t = KeyT, val_t = ValT, parent = none, data = stored }}
           end || MapId <- MapKeys ]),
     aeso_data:heap_value(#maps{next_id = lists:max([-1 | MapKeys]) + 1, maps = Maps}, Ptr, Heap, 32).
-
-parent_to_word(none) ->
-    <<None:256>> = <<(-1):256>>,
-    None;
-parent_to_word(Id) -> Id.
-
-word_to_parent(Word) ->
-    <<None:256>> = <<(-1):256>>,
-    if  Word == None -> none;
-        true         -> Word
-    end.
 
 -spec get_sophia_state_type(aect_contracts:store()) -> false | aeso_sophia:type().
 get_sophia_state_type(Store) ->
@@ -136,12 +122,11 @@ get_sophia_state_type(Store) ->
             Type
     end.
 
--spec get_map_data(aevm_eeevm_maps:map_id(), aect_contracts:store()) -> #{binary() => binary() | tombstone}.
+-spec get_map_data(aevm_eeevm_maps:map_id(), aect_contracts:store()) -> #{binary() => binary()}.
 get_map_data(MapId, Store) ->
-    MkVal = fun(<<0>>) -> tombstone; (V) -> V end,
     %% Inefficient!
     Res = maps:from_list(
-        [ {Key, MkVal(Val)}
+        [ {Key, Val}
          || {<<MapId1:256, Key/binary>>, Val} <- maps:to_list(Store),
             MapId1 == MapId, Key /= <<>> ]),
     Res.
