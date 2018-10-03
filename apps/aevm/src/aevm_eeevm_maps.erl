@@ -68,12 +68,12 @@ get(Id, Key, State) ->
                 tombstone               -> false;
                 Val when is_binary(Val) -> Val
             end;
+        stored ->
+            aevm_eeevm_store:map_lookup(Id, Key, State);
         _ ->
             case Map#pmap.parent of
-                none     -> false;
-                ParentId when ParentId < Id -> get(ParentId, Key, State)
-                    %% Ensuring termination. ParentId will be smaller than Id
-                    %% for any well-formed maps.
+                none     -> false;  %% Parents are always in the store
+                ParentId -> aevm_eeevm_store:map_lookup(ParentId, Key, State)
             end
     end.
 

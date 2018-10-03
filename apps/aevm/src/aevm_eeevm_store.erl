@@ -18,6 +18,7 @@
         , set_sophia_state/2
         , is_valid_key/2
         , get_map_data/2
+        , map_lookup/3
         , next_map_id/1
         ]).
 
@@ -85,8 +86,7 @@ set_sophia_state(Value, Store) ->
 store_maps(Maps0, Store) ->
     Maps       = maps:to_list(Maps0#maps.maps),
     OldMapKeys = [ Id || <<Id:256>> <= maps:get(?SOPHIA_STATE_MAPS_KEY, Store, <<>>) ],
-    NewMapKeys = lists:usort(lists:append([ [Id | [P || P /= none]]
-                                            || {Id, #pmap{parent = P}} <- Maps ])),
+    NewMapKeys = [ Id || {Id, _} <- Maps ],
     Garbage    = OldMapKeys -- NewMapKeys,
 
     %% No need to store already stored maps
@@ -94,7 +94,7 @@ store_maps(Maps0, Store) ->
                     || {Id, M = #pmap{ data = D }} <- Maps, D /= stored ],
 
     MapInfo = maps:from_list(
-        [ {<<MapId:256>>, aeso_data:to_binary({Map#pmap.key_t, Map#pmap.val_t})}
+        [ {<<MapId:256>>, <<MapId:256, (aeso_data:to_binary({Map#pmap.key_t, Map#pmap.val_t}))/binary>>}
           || {MapId, Map} <- NewMaps ]),
     MapData = maps:from_list(
         [ {<<MapId:256, Key/binary>>, Val}
@@ -111,7 +111,7 @@ get_sophia_state(Store) ->
     MapKeys = [ MapId || <<MapId:256>> <= maps:get(?SOPHIA_STATE_MAPS_KEY, Store, <<>>) ],
     Maps = maps:from_list(
         [ begin
-              Bin = maps:get(<<MapId:256>>, Store),
+              <<_:256, Bin/binary>> = maps:get(<<MapId:256>>, Store),
               {ok, {KeyT, ValT}} = aeso_data:from_binary({tuple, [typerep, typerep]}, Bin),
               {MapId, #pmap{ key_t = KeyT, val_t = ValT, parent = none, data = stored }}
           end || MapId <- MapKeys ]),
@@ -129,11 +129,20 @@ get_sophia_state_type(Store) ->
 -spec get_map_data(aevm_eeevm_maps:map_id(), aect_contracts:store()) -> #{binary() => binary()}.
 get_map_data(MapId, Store) ->
     %% Inefficient!
+    <<RealMapId:256, _/binary>> = maps:get(<<MapId:256>>, Store),
     Res = maps:from_list(
         [ {Key, Val}
          || {<<MapId1:256, Key/binary>>, Val} <- maps:to_list(Store),
-            MapId1 == MapId, Key /= <<>> ]),
+            MapId1 == RealMapId, Key /= <<>> ]),
     Res.
+
+-spec map_lookup(aevm_eeevm_maps:map_id(), binary(), aevm_eeevm_state:state()) -> binary() | false.
+map_lookup(Id, Key, State) ->
+    %% TODO: clean up!
+    #{ chain_api := ChainAPI, chain_state := ChainState } = State,
+    Store = ChainAPI:get_store(ChainState),
+    <<RealId:256, _/binary>> = maps:get(<<Id:256>>, Store),
+    maps:get(<<RealId:256, Key/binary>>, Store, false).
 
 -spec next_map_id(aect_contracts:store()) -> aevm_eeevm_maps:map_id().
 next_map_id(#{?SOPHIA_STATE_MAPS_KEY := MapKeys}) ->

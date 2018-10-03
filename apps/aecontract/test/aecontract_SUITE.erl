@@ -2258,6 +2258,7 @@ sophia_pmaps(_Cfg) ->
     {} = ?call(call_contract, Acc, Ct, insert_state, {tuple, []}, {<<"foo">>, <<"bar">>}),
     FooBar = GetState(),
     {} = ?call(call_contract, Acc, Ct, insert_state, {tuple, []}, {<<"xxx">>, <<"yyy">>}),
+    {some, <<"bar">>} = ?call(call_contract, Acc, Ct, lookup_state, {option, string}, <<"foo">>),
     FooBarXY = GetState(),
     {} = ?call(call_contract, Acc, Ct, delete_state, {tuple, []}, {<<"foo">>}),
     XY = GetState(),

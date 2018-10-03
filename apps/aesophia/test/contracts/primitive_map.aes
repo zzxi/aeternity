@@ -25,6 +25,7 @@ contract PrimitiveMaps =
 
   function insert_state(k, v) = put(state{ map @ m = PMap.put(k, v, m) })
   function delete_state(k)    = put(state{ map @ m = PMap.delete(k, m) })
+  function lookup_state(k)    = PMap.get(k, state.map)
 
   function test() =
     let m  = PMap.empty() : pmap(string, string)
