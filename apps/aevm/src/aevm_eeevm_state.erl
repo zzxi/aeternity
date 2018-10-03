@@ -113,6 +113,10 @@ init(#{ env  := Env
          , trace => []
          , trace_fun => init_trace_fun(Opts)
 
+         %% , do_trace  => true
+         %% , trace => []
+         %% , trace_fun => fun io:format/2
+
          , vm_version => maps:get(vm_version, Env)
 
          , maps => aevm_eeevm_maps:init_maps()
@@ -164,13 +168,12 @@ init_vm(State, Code, Mem, Store) ->
             %% Write the state on top of it
             case aevm_eeevm_store:get_sophia_state_type(Store) of
                 false -> State3;  %% No state yet (init function)
-                TypeBin ->
-                    {ok, StateType} = aeso_data:from_binary(typerep, TypeBin),
-                    Addr      = byte_size(aeso_data:heap_value_heap(CalldataHeap)) + 32,
-                    StateData = aevm_eeevm_store:get_sophia_state(Store),
-                    {ok, StateValue} = aeso_data:binary_to_heap(StateType, StateData,
-                                                                aevm_eeevm_maps:next_id(maps(State3)), Addr),
-                    {StatePtr, State4} = write_heap_value(StateValue, State3),
+                StateType ->
+                    Addr       = byte_size(aeso_data:heap_value_heap(CalldataHeap)) + 32,
+                    StateValue = aevm_eeevm_store:get_sophia_state(Store),
+                    {ok, StateValue1} = aeso_data:heap_to_heap(StateType, StateValue,
+                                                               aevm_eeevm_maps:next_id(maps(State3)), Addr),
+                    {StatePtr, State4} = write_heap_value(StateValue1, State3),
                     aevm_eeevm_memory:store(0, StatePtr, State4)
             end
     end.

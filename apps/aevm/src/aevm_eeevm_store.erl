@@ -21,9 +21,11 @@
 
 -include("aevm_eeevm.hrl").
 -include_lib("aecontract/src/aecontract.hrl").
+-include_lib("aesophia/src/aeso_data.hrl").
 
 -define(SOPHIA_STATE_KEY,      <<0>>).
 -define(SOPHIA_STATE_TYPE_KEY, <<1>>).
+-define(SOPHIA_STATE_MAPS_KEY, <<2>>).
 
 %%====================================================================
 %% API
@@ -50,30 +52,80 @@ store(Address, Value, State) when is_integer(Value) ->
     aevm_eeevm_state:set_storage(Store1, State).
 
 %% The argument should be a binary encoding a pair of a typerep and a value of that type.
--spec from_sophia_state(binary()) -> aect_contracts:store().
+-spec from_sophia_state(aeso_data:binary_value()) -> aect_contracts:store().
 from_sophia_state(Data) ->
     %% TODO: less encoding/decoding
     {ok, {Type}}    = aeso_data:from_binary({tuple, [typerep]},    Data),
     %% Strip the type from the binary (TODO: temporary)
-    <<Ptr:256, Heap/binary>> = Data,
-    <<_:Ptr/unit:8, _:256, Val:256, _/binary>> = Data,
-    {ok, StateData} = aeso_data:binary_to_binary(Type, <<Val:256, Heap/binary>>),
-    TypeData        = aeso_data:to_binary(Type),
-    #{ ?SOPHIA_STATE_KEY      => StateData,
-       ?SOPHIA_STATE_TYPE_KEY => TypeData }.
+    Data1 = second_component(Data),
+    {ok, StateValue} = aeso_data:binary_to_heap(Type, Data1, 0, 32),
+    Maps = maps:to_list((aeso_data:heap_value_maps(StateValue))#maps.maps),
+    Mem  = aeso_data:heap_value_heap(StateValue),
+    Ptr  = aeso_data:heap_value_pointer(StateValue),
+    TypeData = aeso_data:to_binary(Type),
+    StateData = <<Ptr:256, Mem/binary>>,
+    MapKeys = << <<MapId:256>> || {MapId, _} <- Maps >>,
+    MapInfo = maps:from_list(
+        [ {<<MapId:256>>, aeso_data:to_binary({Map#pmap.key_t, Map#pmap.val_t, parent_to_word(Map#pmap.parent)})}
+          || {MapId, Map} <- Maps ]),
+    MapData = maps:from_list(
+        [ {<<MapId:256, Key/binary>>, Val}
+          || {MapId, #pmap{data = Map}} <- Maps,
+             {Key, Val} <- maps:to_list(Map) ]),
+    maps:merge(
+        #{ ?SOPHIA_STATE_KEY      => StateData,
+           ?SOPHIA_STATE_TYPE_KEY => TypeData,
+           ?SOPHIA_STATE_MAPS_KEY => MapKeys },
+        maps:merge(MapInfo, MapData)).
+
+%% TODO: Temporary hack to drop the first component (the typerep) from the initial state.
+-spec second_component(aeso_data:binary_value()) -> aeso_data:binary_value().
+second_component(<<Ptr:256, Heap/binary>> = Data) ->
+    <<_:Ptr/unit:8, _:256, Snd:256, _/binary>> = Data,
+    <<Snd:256, Heap/binary>>.
 
 -spec set_sophia_state(binary(), aect_contracts:store()) -> aect_contracts:store().
-set_sophia_state(Data, Store) -> Store#{?SOPHIA_STATE_KEY => Data}.
+set_sophia_state(Data, Store) ->
+    %% TODO
+    Store#{?SOPHIA_STATE_KEY => Data}.
 
--spec get_sophia_state(aect_contracts:store()) -> binary().
-get_sophia_state(Store) -> maps:get(?SOPHIA_STATE_KEY, Store, <<>>).
+-spec get_sophia_state(aect_contracts:store()) -> aeso_data:heap_value().
+get_sophia_state(Store) ->
+    <<Ptr:256, Heap/binary>> = maps:get(?SOPHIA_STATE_KEY, Store, <<>>),
+    MapKeys = [ MapId || <<MapId:256>> <= maps:get(?SOPHIA_STATE_MAPS_KEY, Store, <<>>) ],
+    Maps = maps:from_list(
+        [ begin
+              Bin = maps:get(<<MapId:256>>, Store),
+              {ok, {KeyT, ValT, ParentWord}} = aeso_data:from_binary({tuple, [typerep, typerep, word]}, Bin),
+              Parent = word_to_parent(ParentWord),
+              {MapId, #pmap{ key_t = KeyT, val_t = ValT, parent = Parent, data = stored }}
+          end || MapId <- MapKeys ]),
+    aeso_data:heap_value(#maps{next_id = lists:max([-1 | MapKeys]) + 1, maps = Maps}, Ptr, Heap, 32).
 
--spec get_sophia_state_type(aect_contracts:store()) -> false | binary().
-get_sophia_state_type(Store) -> maps:get(?SOPHIA_STATE_TYPE_KEY, Store, false).
+parent_to_word(none) ->
+    <<None:256>> = <<(-1):256>>,
+    None;
+parent_to_word(Id) -> Id.
 
-is_valid_key(?AEVM_01_Sophia_01, ?SOPHIA_STATE_KEY) -> true;
+word_to_parent(Word) ->
+    <<None:256>> = <<(-1):256>>,
+    if  Word == None -> none;
+        true         -> Word
+    end.
+
+-spec get_sophia_state_type(aect_contracts:store()) -> false | aeso_sophia:type().
+get_sophia_state_type(Store) ->
+    case maps:get(?SOPHIA_STATE_TYPE_KEY, Store, false) of
+        false -> false;
+        Bin   ->
+            {ok, Type} = aeso_data:from_binary(typerep, Bin),
+            Type
+    end.
+
+is_valid_key(?AEVM_01_Sophia_01, ?SOPHIA_STATE_KEY)      -> true;
 is_valid_key(?AEVM_01_Sophia_01, ?SOPHIA_STATE_TYPE_KEY) -> true;
-is_valid_key(?AEVM_01_Sophia_01, _) -> false;
+is_valid_key(?AEVM_01_Sophia_01, ?SOPHIA_STATE_MAPS_KEY) -> true;
+is_valid_key(?AEVM_01_Sophia_01, K) -> is_binary(K) andalso byte_size(K) >= 32;
 is_valid_key(?AEVM_01_Solidity_01, K) -> is_binary_map_key(K).
 
 %%====================================================================
