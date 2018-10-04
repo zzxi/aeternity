@@ -35,6 +35,7 @@
         , gaslimit/1
         , gasprice/1
         , get_contract_call_input/3
+        , heap_to_binary/3
         , init/2
         , jumpdests/1
         , logs/1
@@ -207,6 +208,13 @@ do_return(Us0, Us1, State) ->
     {Out, State1} = aevm_eeevm_memory:get_area(Us0, Us1, State),
             set_out(Out, State1)
     end.
+
+heap_to_binary(Type, Ptr, State) ->
+    Store = get_store(State),
+    Heap  = get_heap(State),
+    Maps  = maps(State),
+    Value = aeso_data:heap_value(Maps, Ptr, Heap),
+    aeso_data:heap_to_binary(Type, Store, Value).
 
 return_contract_call_result(Addr, Size, ReturnData, State) ->
     case aevm_eeevm_state:vm_version(State) of
