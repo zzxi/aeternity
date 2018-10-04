@@ -2262,6 +2262,10 @@ sophia_pmaps(_Cfg) ->
     FooBarXY = GetState(),
     {} = ?call(call_contract, Acc, Ct, delete_state, {tuple, []}, {<<"foo">>}),
     XY = GetState(),
+    {} = ?call(call_contract, Acc, Ct, set_state_map, {tuple, []}, {{pmap, FooBarXY}}),
+    FooBarXY = GetState(),
+    {} = ?call(call_contract, Acc, Ct, clone_state, {tuple, []}, {}),
+    {} = ?call(call_contract, Acc, Ct, double_insert_state, {tuple, []}, {<<"side">>, <<"left">>, <<"right">>}),
     ok.
 
 sophia_variant_types(_Cfg) ->

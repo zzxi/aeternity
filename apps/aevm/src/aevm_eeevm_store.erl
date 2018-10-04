@@ -119,34 +119,57 @@ perform_update({insert, Id, Key, Val}, Store) ->
 perform_update({delete, Id, Key}, Store) ->
     RealId = real_id(Id, Store),
     maps:remove(<<RealId:256, Key/binary>>, Store);
-perform_update({copy, Id, Map0}, Store) ->
+perform_update({new, Id, Map0}, Store) ->
     Map = aevm_eeevm_maps:flatten_map(Store, Id, Map0),
     Info = #{ <<Id:256>> => <<Id:256, (aeso_data:to_binary({Map#pmap.key_t, Map#pmap.val_t}))/binary>> },
     Data = maps:from_list(
             [ {<<Id:256, Key/binary>>, Val} || {Key, Val} <- maps:to_list(Map#pmap.data) ]),
-    maps:merge(Store, maps:merge(Info, Data)).
+    maps:merge(Store, maps:merge(Info, Data));
+perform_update({gc, Id}, Store) ->
+    RealId = real_id(Id, Store),
+    %% Remove map info entry
+    Store1 = maps:remove(<<Id:256>>, Store),
+    %% Remove all the data
+    maps:filter(fun(<<Id1:256, Key/binary>>, _) when Key /= <<>> -> Id1 /= RealId;
+                   (_, _) -> true end, Store1).
 
 real_id(Id, Store) ->
     <<RealId:256, _/binary>> = maps:get(<<Id:256>>, Store),
     RealId.
 
 compute_map_updates(Garbage, Maps0) ->
+
+    %% Ignore maps that are already in the store.
     Maps       = [ E || {_, #pmap{ data = D }} = E <- Maps0, D /= stored ],
-    AllParents = [ P || {_, #pmap{ parent = P }} <- Maps, P /= none ],
-    Duplicates = AllParents -- lists:usort(AllParents),
-    Inplace    = [ E || E = {_, #pmap{ parent = P }} <- Maps,
-                        lists:member(P, Garbage), not lists:member(P, Duplicates) ],
-                        %% TODO: pick one map to inplace update if duplicate
+
+    %% Which maps can be updated inplace? Only _one_ map can be an inplace
+    %% update of a given parent (hence parent as key).
+    InplaceAssignment =
+        maps:from_list(
+            [ {P, Id} || {Id, #pmap{ parent = P }} <- Maps,
+                         P /= none, lists:member(P, Garbage) ]),
+    Inplace    = [ E || E = {Id, #pmap{ parent = P }} <- Maps,
+                        Id == maps:get(P, InplaceAssignment, none) ],
+
+    %% Any map that can't be updated in place needs to be copied.
     Copy       = [ E || E = {Id, _} <- Maps, not lists:keymember(Id, 1, Inplace) ],
-    %% TODO: remove actual garbage
+
+    %% Unused maps that are not used for inplace updates should be garbage
+    %% collected.
+    ActualGarbage = Garbage -- [ P || {_, #pmap{ parent = P }} <- Inplace ],
+
     lists:flatten(
-        [ [{new_inplace, Id, Parent},
+        %% Copy first since inplace update might destroy data needed by the
+        %% copy.
+        [ [{new, Id, Map} || {Id, Map} <- Copy]
+        , [ [{new_inplace, Id, Parent},
             [ case Val of
                 tombstone -> {delete, Id, Key};
                 _         -> {insert, Id, Key, Val}
               end || {Key, Val} <- maps:to_list(Data) ]]
-         || {Id, #pmap{ parent = Parent, data = Data }} <- Inplace ] ++
-        [ [{copy, Id, Map} || {Id, Map} <- Copy] ]).
+           || {Id, #pmap{ parent = Parent, data = Data }} <- Inplace ]
+        , [{gc, Id} || Id <- ActualGarbage ]
+        ]).
 
 
 -spec get_sophia_state(aect_contracts:store()) -> aeso_data:heap_value().

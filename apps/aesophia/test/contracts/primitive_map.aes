@@ -7,9 +7,13 @@ contract MapServer =
 contract PrimitiveMaps =
 
   record state = { remote : MapServer,
-                   map    : pmap(string, string) }
+                   map    : pmap(string, string),
+                   map2   : pmap(string, string) }
 
-  function init(r) = { remote = r, map = PMap.empty() }
+  function init(r) =
+    let m = PMap.empty()
+    { remote = r, map = m, map2 = m }
+
   function set_remote(r) = put(state{ remote = r })
 
   function insert(k, v, m) : pmap(string, string) = PMap.put(k, v, m)
@@ -21,11 +25,18 @@ contract PrimitiveMaps =
   function remote_delete(k, m) =
     state.remote.delete(k, m)
 
-  function get_state_map() = state.map
+  function get_state_map()  = state.map
+  function set_state_map(m) = put(state{ map = m })
+
+  function clone_state() = put(state{ map2 = state.map })
 
   function insert_state(k, v) = put(state{ map @ m = PMap.put(k, v, m) })
   function delete_state(k)    = put(state{ map @ m = PMap.delete(k, m) })
   function lookup_state(k)    = PMap.get(k, state.map)
+
+  function double_insert_state(k, v1, v2) =
+    put(state{ map  @ m = PMap.put(k, v1, m),
+               map2 @ m = PMap.put(k, v2, m) })
 
   function test() =
     let m  = PMap.empty() : pmap(string, string)
