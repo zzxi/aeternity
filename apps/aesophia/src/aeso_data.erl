@@ -5,7 +5,7 @@
         , binary_to_words/1
         , from_heap/3
         , binary_to_heap/4
-        , heap_to_heap/5
+        , heap_to_heap/4
         , heap_to_binary/3
         , binary_to_binary/2
         , heap_value/3
@@ -127,12 +127,11 @@ binary_to_binary(Type, <<Ptr:32/unit:8, Heap/binary>>) ->
 %% -- Heap to heap -----------------------------------------------------------
 
 %% Used for the state
--spec heap_to_heap(Type :: ?Type(), Store :: store(), Heap :: heap_value(),
-                   NextId :: non_neg_integer(), Offs :: offset()) ->
+-spec heap_to_heap(Type :: ?Type(), Store :: store(), Heap :: heap_value(), Offs :: offset()) ->
         {ok, heap_value()} | {error, term()}.
-heap_to_heap(Type, Store, {Ptr, Heap}, NextId, Offs) ->
+heap_to_heap(Type, Store, {Ptr, Heap}, Offs) ->
     try
-        {Addr, {Maps, _, Mem}} = convert(heap, heap, Store, #{}, Type, Ptr, set_next_id(Heap, NextId), Offs),
+        {Addr, {Maps, _, Mem}} = convert(heap, heap, Store, #{}, Type, Ptr, Heap, Offs),
         {ok, heap_value(Maps, Addr, list_to_binary(Mem), Offs)}
     catch _:Err ->
         io:format("** Error: heap_to_heap failed with ~p\n  ~p\n", [Err, erlang:get_stacktrace()]),
@@ -160,8 +159,8 @@ convert(Input, Output, Store, Visited, {list, T}, Val, Heap, BaseAddr) ->
         Nil -> {Nil, {no_maps(Heap), 0, []}};
         _   -> convert(Input, Output, Store, Visited, {tuple, [T, {list, T}]}, Val, Heap, BaseAddr)
     end;
-convert(Input, binary, Store, _Visited, {pmap, KeyT, ValT}, MapId, Heap, BaseAddr) ->
-    Map0 = convert_map(Input, KeyT, ValT, MapId, Heap),
+convert(Input, binary, Store, Visited, {pmap, KeyT, ValT}, MapId, Heap, BaseAddr) ->
+    {_NoMaps, Map0} = convert_map(Input, binary, Store, Visited, KeyT, ValT, MapId, Heap),
     %% Will be a no-op if Input == binary
     Map  = aevm_eeevm_maps:flatten_map(Store, MapId, Map0),
     KVs  = maps:to_list(Map#pmap.data),
@@ -177,16 +176,21 @@ convert(Input, binary, Store, _Visited, {pmap, KeyT, ValT}, MapId, Heap, BaseAdd
     Mem  = lists:reverse(RMem),
     %% Target is binary so no maps required
     {BaseAddr, {no_maps(Heap), FinalBase - BaseAddr, [<<Size:256>>, Mem]}};
-convert(Input, heap, _Store, _Visited, {pmap, KeyT, ValT}, Ptr, Heap, _BaseAddr) ->
-    PMap   = convert_map(Input, KeyT, ValT, Ptr, Heap),
-    NoMaps = no_maps(Heap),
+convert(Input, heap, Store, Visited, {pmap, KeyT, ValT}, Ptr, Heap, _BaseAddr) ->
+    {InnerMaps, PMap} = convert_map(Input, heap, Store, Visited, KeyT, ValT, Ptr, Heap),
     case PMap#pmap.data of
         stored -> %% Keep the id of stored maps (only possible if Input == heap)
-            Maps = NoMaps#maps{ maps = #{ Ptr => PMap } },
+            Maps = InnerMaps#maps{ maps = (InnerMaps#maps.maps)#{ Ptr => PMap } },
             {Ptr, {Maps, 0, []}};
         _ ->
-            {Id, Maps} = add_map(PMap, NoMaps),
-            {Id, {Maps, 0, []}}
+            case Input of   %% Don't allocate new maps for heap->heap
+                heap ->
+                    Maps = InnerMaps#maps{ maps = (InnerMaps#maps.maps)#{ Ptr => PMap } },
+                    {Ptr, {Maps, 0, []}};
+                binary ->
+                    {Id, Maps} = add_map(PMap, InnerMaps),
+                    {Id, {Maps, 0, []}}
+            end
     end;
 convert(_, _, _, _, {tuple, []}, _Ptr, Heap, _BaseAddr) ->
     {0, {no_maps(Heap), 0, []}}; %% Use 0 for the empty tuple (need a unique value).
@@ -223,13 +227,38 @@ convert_components(Input, Output, Store, Visited, [T | Ts], [Ptr | Ptrs], Heap, 
     convert_components(Input, Output, Store, Visited, Ts, Ptrs, Heap, BaseAddr + Size,
                          [<<NewPtr:256>> | PtrAcc], [Mem | MemAcc], merge_maps(Maps, Maps1)).
 
-convert_map(heap, _KeyT, _ValT, MapId, Heap) ->
+get_map(heap, _KeyT, _ValT, MapId, Heap) ->
     #{ MapId := Map } = Heap#heap.maps#maps.maps,
     Map;
-convert_map(binary, KeyT, ValT, Ptr, Heap) ->
+get_map(binary, KeyT, ValT, Ptr, Heap) ->
     Size = get_word(Heap, Ptr),
     Map  = map_binary_to_heap(Size, Heap, Ptr + 32),
     #pmap{ key_t = KeyT, val_t = ValT, parent = none, data = Map }.
+
+convert_map(Input, Output, Store, Visited, KeyT, ValT, Ptr, Heap) ->
+    Map = #pmap{ data = Data } = get_map(Input, KeyT, ValT, Ptr, Heap),
+    {InnerMaps, Data1} =
+        convert_map_values(Input, Output, Store, Visited, ValT, Data, Heap),
+    {InnerMaps, Map#pmap{ data = Data1 }}.
+
+convert_map_values(_, _, _Store, _Visited, _ValT, stored, Heap) ->
+    {no_maps(Heap), stored};
+convert_map_values(Input, Output, Store, Visited, ValT, Data, Heap) ->
+    KVs = maps:to_list(Data),
+    {Maps, Data1} =
+        lists:foldl(fun({K, V}, {VMaps, D}) ->
+                        Heap1 = set_next_id(Heap, VMaps#maps.next_id),
+                        {VMaps1, V1} = convert_map_value(Input, Output, Store, Visited, ValT, V, Heap1),
+                        {merge_maps(VMaps, VMaps1), D#{ K => V1 }}
+                    end, {no_maps(Heap), #{}}, KVs),
+    {Maps, Data1}.
+
+convert_map_value(_Input, _Output, _Store, _Visited, _ValT, tombstone, Heap) ->
+    {no_maps(Heap), tombstone};
+convert_map_value(Input, Output, Store, Visited, ValT, <<ValPtr:256, ValBin/binary>>, Heap) ->
+    ValHeap = heap_fragment(Heap#heap.maps, 32, ValBin),
+    {ValPtr1, {Maps, _Size, ValBin1}} = convert(Input, Output, Store, Visited, ValT, ValPtr, ValHeap, 32),
+    {Maps, <<ValPtr1:256, (list_to_binary(ValBin1))/binary>>}.
 
 %% -- Value to binary --------------------------------------------------------
 

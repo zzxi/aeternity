@@ -41,8 +41,14 @@ next_id(#maps{next_id = Id}) -> Id.
 -spec merge(maps(), state()) -> state().
 merge(NewMaps, State) ->
     OldMaps = aevm_eeevm_state:maps(State),
-    %% Use next_id from NewMaps
-    Maps = NewMaps#maps{ maps = maps:merge(OldMaps#maps.maps, NewMaps#maps.maps) },
+    %% Use next_id from NewMaps (unless undefined)
+    NextId =
+        case NewMaps#maps.next_id of
+            undefined -> OldMaps#maps.next_id;
+            Id        -> Id
+        end,
+    Maps = #maps{ maps = maps:merge(OldMaps#maps.maps, NewMaps#maps.maps),
+                  next_id = NextId },
     aevm_eeevm_state:set_maps(Maps, State).
 
 -spec map_type(map_id(), state()) -> {typerep(), typerep()}.

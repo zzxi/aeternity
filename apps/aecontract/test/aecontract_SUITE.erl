@@ -60,6 +60,7 @@
         , sophia_maps/1
         , sophia_map_benchmark/1
         , sophia_pmaps/1
+        , sophia_map_of_maps/1
         , sophia_variant_types/1
         , sophia_chain/1
         , sophia_savecoinbase/1
@@ -2266,6 +2267,13 @@ sophia_pmaps(_Cfg) ->
     FooBarXY = GetState(),
     {} = ?call(call_contract, Acc, Ct, clone_state, {tuple, []}, {}),
     {} = ?call(call_contract, Acc, Ct, double_insert_state, {tuple, []}, {<<"side">>, <<"left">>, <<"right">>}),
+    ok.
+
+sophia_map_of_maps(_Cfg) ->
+    state(aect_test_utils:new_state()),
+    Acc = ?call(new_account, 1000000000),
+    {Ct, _Gas} = ?call(create_contract, Acc, map_of_maps, {}, #{gas => 1000000, return_gas_used => true}),
+    {some, <<"black king">>} = ?call(call_contract, Acc, Ct, piece, {option, string}, {8, 5}),
     ok.
 
 sophia_variant_types(_Cfg) ->

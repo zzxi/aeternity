@@ -36,6 +36,7 @@
         , gasprice/1
         , get_contract_call_input/3
         , heap_to_binary/3
+        , heap_to_heap/3
         , init/2
         , jumpdests/1
         , logs/1
@@ -45,7 +46,7 @@
         , mem/1
         , no_recursion/1
         , number/1
-        , return_contract_call_result/4
+        , return_contract_call_result/6
         , return_data/1
         , save_store/1
         , set_code/2
@@ -181,11 +182,18 @@ import_state_from_store(Store, State) ->
     case aevm_eeevm_store:get_sophia_state_type(Store) of
         false -> State;  %% No state yet (init function)
         StateType ->
-            NextId     = aevm_eeevm_store:next_map_id(Store),
             Addr       = 32,
             StateValue = aevm_eeevm_store:get_sophia_state(Store),
-            {ok, StateValue1} = aeso_data:heap_to_heap(StateType, Store, StateValue, NextId, Addr),
-            {StatePtr, State1} = write_heap_value(StateValue1, State),
+            {ok, StateValue1} = aeso_data:heap_to_heap(StateType, Store, StateValue, Addr),
+            %% TODO: Totally not an appropriate solution, but just to get a
+            %% little further: don't throw out any stored maps.
+            HackHackHack = aeso_data:heap_value_maps(StateValue),
+            StateValue2 = aeso_data:heap_value(HackHackHack,
+                                               aeso_data:heap_value_pointer(StateValue1),
+                                               aeso_data:heap_value_heap(StateValue1),
+                                               aeso_data:heap_value_offset(StateValue1)),
+
+            {StatePtr, State1} = write_heap_value(StateValue2, State),
             aevm_eeevm_memory:store(0, StatePtr, State1)
     end.
 
@@ -216,7 +224,17 @@ heap_to_binary(Type, Ptr, State) ->
     Value = aeso_data:heap_value(Maps, Ptr, Heap),
     aeso_data:heap_to_binary(Type, Store, Value).
 
-return_contract_call_result(Addr, Size, ReturnData, State) ->
+heap_to_heap(Type, Ptr, State) ->
+    Store = get_store(State),
+    Heap  = get_heap(State),
+    Maps  = maps(State),
+    Value = aeso_data:heap_value(Maps, Ptr, Heap),
+    {ok, NewValue} = aeso_data:heap_to_heap(Type, Store, Value, 32),
+    NewPtr = aeso_data:heap_value_pointer(NewValue),
+    NewBin = aeso_data:heap_value_heap(NewValue),
+    {ok, <<NewPtr:256, NewBin/binary>>}.
+
+return_contract_call_result(To, Input, Addr, Size, ReturnData, State) ->
     case aevm_eeevm_state:vm_version(State) of
         ?AEVM_01_Solidity_01 ->
             {1, aevm_eeevm_memory:write_area(Addr, ReturnData, State)};
@@ -229,13 +247,28 @@ return_contract_call_result(Addr, Size, ReturnData, State) ->
                 HeapSize   = aevm_eeevm_memory:size_in_words(State) * 32,
                 {Heap, _}  = aevm_eeevm_memory:get_area(0, HeapSize, State),
                 {ok, Type} = aeso_data:from_heap(typerep, Heap, TypePtr),
-                {ok, OutValue} = aeso_data:binary_to_heap(Type, ReturnData, aevm_eeevm_maps:next_id(maps(State)), HeapSize),
+                OutValue =
+                    case is_local_primop(To, Input) of
+                        true ->
+                            %% Local primops (like map primops) return heap values
+                            <<Ptr:256, Bin/binary>> = ReturnData,
+                            HeapVal = aeso_data:heap_value(maps(State), Ptr, Bin, 32),
+                            {ok, Out} = aeso_data:heap_to_heap(Type, get_store(State), HeapVal, HeapSize),
+                            Out;
+                        false ->
+                            {ok, Out} = aeso_data:binary_to_heap(Type, ReturnData, aevm_eeevm_maps:next_id(maps(State)), HeapSize),
+                            Out
+                    end,
                 write_heap_value(OutValue, State)
             catch _:Err ->
                 io:format("** Failed to decode contract return value\n~P\n~p\n", [erlang:get_stacktrace(), 20, Err]),
                 {0, set_gas(0, State)}
             end
     end.
+
+is_local_primop(?PRIM_CALLS_CONTRACT, Calldata) ->
+    aevm_ae_primops:is_local_primop(Calldata);
+is_local_primop(_, _) -> false.
 
 -spec save_store(state()) -> state().
 save_store(#{ chain_state := ChainState
@@ -258,14 +291,13 @@ save_store(#{ chain_state := ChainState
                         {ok, Type}   = aeso_data:from_heap(typerep, Heap, TypePtr),
                         {Ptr, _}     = aevm_eeevm_memory:load(Addr, State),
                         Store        = get_store(State),
-                        NextId       = aevm_eeevm_store:next_map_id(Store),
                         StateValue   = aeso_data:heap_value(maps(State), Ptr, Heap),
-                        {ok, StateValue1} = aeso_data:heap_to_heap(Type, Store, StateValue, NextId, 32),
+                        {ok, StateValue1} = aeso_data:heap_to_heap(Type, Store, StateValue, 32),
                         Store1       = aevm_eeevm_store:set_sophia_state(StateValue1, Store),
                         State#{ chain_state => ChainAPI:set_store(Store1, ChainState) }
                 end
             catch _:_ ->
-                io:format("** Error reading updated state\n~s", [format_mem(mem(State))]),
+                io:format("** Error reading updated state\n~s\n~p\n", [format_mem(mem(State)), erlang:get_stacktrace()]),
                 State
             end
     end.
@@ -313,7 +345,8 @@ write_heap_value(HeapValue, State) ->
 call_contract(Caller, Target, CallGas, Value, Data, State) ->
     case vm_version(State) of
         ?AEVM_01_Sophia_01 when Target == ?PRIM_CALLS_CONTRACT ->
-            aevm_ae_primops:call(Value, Data, State);
+            Res = aevm_ae_primops:call(Value, Data, State),
+            Res;
         _ ->
             CallStack  = [Caller | call_stack(State)],
             TargetKey  = <<Target:256>>,

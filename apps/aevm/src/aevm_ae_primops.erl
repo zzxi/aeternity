@@ -8,7 +8,7 @@
 %%%-------------------------------------------------------------------
 
 -module(aevm_ae_primops).
--export([call/3]).
+-export([call/3, is_local_primop/1]).
 
 -include_lib("aebytecode/include/aeb_opcodes.hrl").
 -include("aevm_ae_primops.hrl").
@@ -61,6 +61,12 @@ call_primop(PrimOp, Value, Data, StateIn) ->
                     {ok, ReturnValue, GasSpent, StateOut};
                 {error, _} = Err -> Err
             end
+    end.
+
+is_local_primop(Data) ->
+    case get_primop(Data) of
+        Op when ?PRIM_CALL_IN_MAP_RANGE(Op) -> true;
+        _ -> false
     end.
 
 call_(PrimOp, Value, Data, State) ->
@@ -287,9 +293,7 @@ map_call_get(Data, State) ->
     Res = case aevm_eeevm_maps:get(MapId, KeyBin, State) of
             false -> aeso_data:to_binary(none);
             <<ValPtr:256, ValBin/binary>> ->
-                %% Some hacky juggling to build an option binary. It's ok to
-                %% use a non-canonical binary_value() here since it's not used
-                %% in a 'key' position.
+                %% Some hacky juggling to build an option value.
                 NewPtr = 32 + byte_size(ValBin),
                 <<NewPtr:256, ValBin/binary, 1:256, ValPtr:256>>
           end,
@@ -300,7 +304,7 @@ map_call_put(Data, State) ->
     {KeyType, ValType} = aevm_eeevm_maps:map_type(MapId, State),
     [_, KeyPtr, ValPtr] = get_args([word, word, word], Data),
     {ok, KeyBin}        = aevm_eeevm_state:heap_to_binary(KeyType, KeyPtr, State),
-    {ok, ValBin}        = aevm_eeevm_state:heap_to_binary(ValType, ValPtr, State),
+    {ok, ValBin}        = aevm_eeevm_state:heap_to_heap(ValType, ValPtr, State),
     {NewMapId, State1} = aevm_eeevm_maps:put(MapId, KeyBin, ValBin, State),
     {ok, {ok, <<NewMapId:256>>}, 0, State1}.
 
@@ -317,12 +321,12 @@ map_call_delete(Data, State) ->
 %% ------------------------------------------------------------------
 
 get_primop(Data) ->
-    {ok, {_, T}} = aeso_data:from_binary({tuple, [typerep, {tuple, [word]}]}, Data),
+    {ok, {_, T}} = aeso_data:from_binary({tuple, [word, {tuple, [word]}]}, Data),
     {PrimOp} = T,
     PrimOp.
 
 get_args(Types, Data) ->
-    {ok, {_, Val}} = aeso_data:from_binary({tuple, [typerep, {tuple, [word | Types]}]}, Data),
+    {ok, {_, Val}} = aeso_data:from_binary({tuple, [word, {tuple, [word | Types]}]}, Data),
     [_ | Args] = tuple_to_list(Val),
     Args.
 

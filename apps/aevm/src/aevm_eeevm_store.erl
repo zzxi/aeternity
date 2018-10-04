@@ -58,7 +58,7 @@ store(Address, Value, State) when is_integer(Value) ->
 -spec from_sophia_state(aeso_data:binary_value()) -> aect_contracts:store().
 from_sophia_state(Data) ->
     %% TODO: less encoding/decoding
-    {ok, {Type}}    = aeso_data:from_binary({tuple, [typerep]},    Data),
+    {ok, {Type}}    = aeso_data:from_binary({tuple, [typerep]}, Data),
     %% Strip the type from the binary (TODO: temporary)
     Data1 = second_component(Data),
     {ok, StateValue} = aeso_data:binary_to_heap(Type, Data1, 0, 32),
@@ -66,9 +66,11 @@ from_sophia_state(Data) ->
     Mem       = aeso_data:heap_value_heap(StateValue),
     Ptr       = aeso_data:heap_value_pointer(StateValue),
     StateData = <<Ptr:256, Mem/binary>>,
-    store_maps(aeso_data:heap_value_maps(StateValue),
-        #{ ?SOPHIA_STATE_KEY      => StateData,
-           ?SOPHIA_STATE_TYPE_KEY => TypeData }).
+    Store     = store_maps(aeso_data:heap_value_maps(StateValue),
+                           #{ ?SOPHIA_STATE_KEY      => StateData,
+                              ?SOPHIA_STATE_TYPE_KEY => TypeData }),
+    %% io:format("Initial state:\n~s\n", [show_store(Store)]),
+    Store.
 
 %% TODO: Temporary hack to drop the first component (the typerep) from the initial state.
 -spec second_component(aeso_data:binary_value()) -> aeso_data:binary_value().
@@ -82,18 +84,18 @@ set_sophia_state(Value, Store) ->
     Mem = aeso_data:heap_value_heap(Value),
     Maps = aeso_data:heap_value_maps(Value),
     NewStore = store_maps(Maps, Store#{?SOPHIA_STATE_KEY => <<Ptr:256, Mem/binary>>}),
-    io:format("NewStore:\n~s\n", [show_store(NewStore)]),
+    %% io:format("NewStore:\n~s\n", [show_store(NewStore)]),
     NewStore.
 
-show_store(Store) ->
-    Show = fun(?SOPHIA_STATE_KEY)      -> "?SOPHIA_STATE_KEY";
-              (?SOPHIA_STATE_TYPE_KEY) -> "?SOPHIA_STATE_TYPE_KEY";
-              (?SOPHIA_STATE_MAPS_KEY) -> "?SOPHIA_STATE_MAPS_KEY";
-              (<<Id:256>>)             -> integer_to_list(Id);
-              (<<Id:256, Key/binary>>) -> io_lib:format("~p:~p", [Id, aeso_test_utils:dump_words(Key)])
-           end,
-    io_lib:format("~s\n", [[io_lib:format("  ~s =>\n    ~p\n",
-                             [Show(Key), aeso_test_utils:dump_words(Val)]) || {Key, Val} <- maps:to_list(Store)]]).
+%% show_store(Store) ->
+%%     Show = fun(?SOPHIA_STATE_KEY)      -> "?SOPHIA_STATE_KEY";
+%%               (?SOPHIA_STATE_TYPE_KEY) -> "?SOPHIA_STATE_TYPE_KEY";
+%%               (?SOPHIA_STATE_MAPS_KEY) -> "?SOPHIA_STATE_MAPS_KEY";
+%%               (<<Id:256>>)             -> integer_to_list(Id);
+%%               (<<Id:256, Key/binary>>) -> io_lib:format("~p:~p", [Id, aeso_test_utils:dump_words(Key)])
+%%            end,
+%%     io_lib:format("~s\n", [[io_lib:format("  ~s =>\n    ~p\n",
+%%                              [Show(Key), aeso_test_utils:dump_words(Val)]) || {Key, Val} <- maps:to_list(Store)]]).
 
 store_maps(Maps0, Store) ->
     Maps       = maps:to_list(Maps0#maps.maps),
@@ -102,7 +104,6 @@ store_maps(Maps0, Store) ->
     Garbage    = OldMapKeys -- NewMapKeys,
 
     Updates = compute_map_updates(Garbage, Maps),
-    io:format("Updates: ~p\n", [Updates]),
 
     Store1 = Store#{ ?SOPHIA_STATE_MAPS_KEY => << <<Id:256>> || Id <- NewMapKeys >> },
     lists:foldl(fun perform_update/2, Store1, Updates).
@@ -182,7 +183,6 @@ get_sophia_state(Store) ->
               {ok, {KeyT, ValT}} = aeso_data:from_binary({tuple, [typerep, typerep]}, Bin),
               {MapId, #pmap{ key_t = KeyT, val_t = ValT, parent = none, data = stored }}
           end || MapId <- MapKeys ]),
-    io:format("Loading\n  ~p\n", [Maps]),
     aeso_data:heap_value(#maps{next_id = lists:max([-1 | MapKeys]) + 1, maps = Maps}, Ptr, Heap, 32).
 
 -spec get_sophia_state_type(aect_contracts:store()) -> false | aeso_sophia:type().
