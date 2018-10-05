@@ -378,7 +378,8 @@ binary_to_words(Bin) ->
 from_heap(Type, Heap, Ptr) ->
     try {ok, from_binary(#{}, Type, Heap, Ptr)}
     catch _:Err ->
-        {error, {Err, erlang:get_stacktrace()}}
+        io:format("** Error: from_heap failed with ~p\n  ~p\n", [Err, erlang:get_stacktrace()]),
+        {error, Err}
     end.
 
 %% Base address is the address of the first word of the given heap.
@@ -511,22 +512,35 @@ check_circular_refs(Visited, V) ->
         false -> ok
     end.
 
-heap_word(Heap,Addr) ->
+heap_word(Heap, Addr) when is_binary(Heap) ->
     BitSize = 8*Addr,
     <<_:BitSize,W:256,_/binary>> = Heap,
-    W.
+    W;
+heap_word(Heap, Addr) when is_map(Heap) ->
+    0 = Addr rem 32, %% Check that it's word aligned.
+    maps:get(Addr, Heap, 0).
 
 -spec get_word(heap_fragment(), pointer()) -> word().
 get_word(#heap{offset = Offs, heap = Mem}, Addr) when Addr >= Offs ->
-    BitOffs = (Addr - Offs) * 8,
-    <<_:BitOffs, Word:256, _/binary>> = Mem,
-    Word.
+    get_word(Mem, Addr - Offs);
+get_word(Mem, Addr) when is_binary(Mem) ->
+    <<_:Addr/unit:8, Word:256, _/binary>> = Mem,
+    Word;
+get_word(Mem, Addr) when is_map(Mem) ->
+    0 = Addr rem 32,
+    maps:get(Addr, Mem, 0).
 
 -spec get_chunk(heap_fragment(), pointer(), non_neg_integer()) -> binary().
 get_chunk(#heap{offset = Offs, heap = Mem}, Addr, Bytes) when Addr >= Offs ->
-    BitOffs = (Addr - Offs) * 8,
-    <<_:BitOffs, Chunk:Bytes/binary, _/binary>> = Mem,
-    Chunk.
+    get_chunk(Mem, Addr - Offs, Bytes);
+get_chunk(Mem, Addr, Bytes) when is_binary(Mem) ->
+    <<_:Addr/unit:8, Chunk:Bytes/binary, _/binary>> = Mem,
+    Chunk;
+get_chunk(Mem, Addr, Bytes) when is_map(Mem) ->
+    0 = Addr  rem 32,
+    0 = Bytes rem 32,
+    Words = Bytes div 32,
+    << <<(maps:get(Addr + 32 * I, Mem, 0)):256>> || I <- lists:seq(0, Words - 1) >>.
 
 -spec get_function_from_calldata(Calldata::binary()) ->
                                         {ok, term()} | {error, term()}.

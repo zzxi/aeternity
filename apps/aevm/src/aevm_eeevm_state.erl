@@ -196,7 +196,7 @@ do_return(Us0, Us1, State) ->
             try
             %% In Sophia Us0 is a pointer to a typerep for the return value, and
             %% Us1 is a pointer to the actual value.
-            Heap       = get_heap(State),
+            Heap       = mem(State),
             {ok, Type} = aeso_data:from_heap(typerep, Heap, Us0),
             {ok, Out}  = aeso_data:heap_to_binary(Type, get_store(State), aeso_data:heap_value(maps(State), Us1, Heap)),
             set_out(Out, State)
@@ -212,14 +212,14 @@ do_return(Us0, Us1, State) ->
 
 heap_to_binary(Type, Ptr, State) ->
     Store = get_store(State),
-    Heap  = get_heap(State),
+    Heap  = mem(State),
     Maps  = maps(State),
     Value = aeso_data:heap_value(Maps, Ptr, Heap),
     aeso_data:heap_to_binary(Type, Store, Value).
 
 heap_to_heap(Type, Ptr, State) ->
     Store = get_store(State),
-    Heap  = get_heap(State),
+    Heap  = mem(State),
     Maps  = maps(State),
     Value = aeso_data:heap_value(Maps, Ptr, Heap),
     {ok, NewValue} = aeso_data:heap_to_heap(Type, Store, Value, 32),
@@ -238,7 +238,7 @@ return_contract_call_result(To, Input, Addr, Size, ReturnData, State) ->
                 %% top of the heap.
                 TypePtr    = Size,
                 HeapSize   = aevm_eeevm_memory:size_in_words(State) * 32,
-                {Heap, _}  = aevm_eeevm_memory:get_area(0, HeapSize, State),
+                Heap       = mem(State),
                 {ok, Type} = aeso_data:from_heap(typerep, Heap, TypePtr),
                 OutValue =
                     case is_local_primop(To, Input) of
@@ -280,7 +280,7 @@ save_store(#{ chain_state := ChainState
                     0 -> State;     %% to indicate that the state didn't change.
                     _ ->
                         {TypePtr, _} = aevm_eeevm_stack:pop(State),
-                        Heap         = get_heap(State),
+                        Heap         = mem(State),
                         {ok, Type}   = aeso_data:from_heap(typerep, Heap, TypePtr),
                         {Ptr, _}     = aevm_eeevm_memory:load(Addr, State),
                         Store        = get_store(State),
@@ -304,7 +304,7 @@ get_contract_call_input(IOffset, ISize, State) ->
             %% a pointer into the heap.
             TypePtr = ISize,
             Ptr     = IOffset,
-            Heap       = get_heap(State),
+            Heap       = mem(State),
             {ok, Type} = aeso_data:from_heap(typerep, Heap, TypePtr),
             %% TODO: This is a bit awkward since we need to pass the argument
             %%       typerep in the calldata. Will be much better when types
@@ -313,17 +313,11 @@ get_contract_call_input(IOffset, ISize, State) ->
             %% and call heap_to_binary on that.
             PairPtr   = 32 * aevm_eeevm_memory:size_in_words(State),
             TmpState  = aevm_eeevm_memory:write_area(PairPtr, <<TypePtr:256, Ptr:256>>, State),
-            TmpHeap   = get_heap(TmpState),
+            TmpHeap   = mem(TmpState),
             {ok, Arg} = aeso_data:heap_to_binary({tuple, [typerep, Type]}, get_store(TmpState),
                                                  aeso_data:heap_value(maps(TmpState), PairPtr, TmpHeap)),
             {Arg, State}
     end.
-
-%% Get the entire heap. Does not update the state.
-get_heap(State) ->
-    Size      = aevm_eeevm_memory:size_in_words(State) * 32,
-    {Heap, _} = aevm_eeevm_memory:get_area(0, Size, State),
-    Heap.
 
 -spec write_heap_value(aeso_data:heap_value(), state()) -> {non_neg_integer(), state()}.
 write_heap_value(HeapValue, State) ->
