@@ -14,13 +14,14 @@
         , heap_value_maps/1
         , heap_value_offset/1
         , heap_value_heap/1
+        , used_maps/2
         , from_binary/2
         , from_binary/3
         , get_function_from_calldata/1
         , sophia_type_to_typerep/1
         ]).
 
--export_type([binary_value/0, heap_value/0, heap_fragment/0]).
+-export_type([binary_value/0, binary_heap_value/0, heap_value/0, heap_fragment/0]).
 
 -include("aeso_icode.hrl").
 -include("aeso_data.hrl").
@@ -37,6 +38,7 @@
 -type binary_value()    :: binary().
 -opaque heap_fragment() :: #heap{}.
 -type heap_value()      :: {pointer(), heap_fragment()}.
+-type binary_heap_value() :: binary().  %% <<Ptr:256, Heap/binary>> offset 0, maps as ids
 
 %% -- Manipulating heap values -----------------------------------------------
 
@@ -259,6 +261,45 @@ convert_map_value(Input, Output, Store, Visited, ValT, <<ValPtr:256, ValBin/bina
     ValHeap = heap_fragment(Heap#heap.maps, 32, ValBin),
     {ValPtr1, {Maps, _Size, ValBin1}} = convert(Input, Output, Store, Visited, ValT, ValPtr, ValHeap, 32),
     {Maps, <<ValPtr1:256, (list_to_binary(ValBin1))/binary>>}.
+
+%% -- Compute used map ids ---------------------------------------------------
+
+-spec used_maps(?Type(), binary_heap_value()) -> [non_neg_integer()].
+used_maps(Type, <<Ptr:256, Mem/binary>>) ->
+    used_maps(#{}, Type, Ptr, heap_fragment(32, Mem)).
+
+has_maps({pmap, _, _})  -> true;
+has_maps(word)          -> false;
+has_maps(string)        -> false;
+has_maps(typerep)       -> false;
+has_maps({list, T})     -> has_maps(T);
+has_maps({tuple, Ts})   -> lists:any(fun has_maps/1, Ts);
+has_maps({variant, Cs}) -> lists:any(fun has_maps/1, lists:append(Cs)).
+
+used_maps(Visited, Type, Ptr, Heap) ->
+    case has_maps(Type) of
+        false -> [];
+        true  -> used_maps1(Visited, Type, Ptr, Heap)
+    end.
+
+used_maps1(_, {pmap, _, _}, Id, _) -> [Id];
+used_maps1(Visited, {list, T}, Val, Heap) ->
+    <<Nil:256>> = <<(-1):256>>,   %% empty list is -1
+    case Val of
+        Nil -> [];
+        _   -> used_maps1(Visited, {tuple, [T, {list, T}]}, Val, Heap)
+    end;
+used_maps1(Visited, {tuple, Ts}, Ptr, Heap) ->
+    Visited1 = visit(Visited, Ptr),
+    Used     = [ begin
+                    P = get_word(Heap, Ptr + I * 32),
+                    used_maps(Visited1, T, P, Heap)
+                 end || {T, I} <- lists:zip(Ts, lists:seq(0, length(Ts) - 1)) ],
+    lists:umerge(Used);
+used_maps1(Visited, {variant, Cs}, Ptr, Heap) ->
+    Tag = get_word(Heap, Ptr),
+    Ts  = lists:nth(Tag + 1, Cs),
+    used_maps(Visited, {tuple, [word | Ts]}, Ptr, Heap).
 
 %% -- Value to binary --------------------------------------------------------
 

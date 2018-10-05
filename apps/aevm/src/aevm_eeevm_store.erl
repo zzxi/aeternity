@@ -66,7 +66,8 @@ from_sophia_state(Data) ->
     Mem       = aeso_data:heap_value_heap(StateValue),
     Ptr       = aeso_data:heap_value_pointer(StateValue),
     StateData = <<Ptr:256, Mem/binary>>,
-    Store     = store_maps(aeso_data:heap_value_maps(StateValue),
+    Maps      = aeso_data:heap_value_maps(StateValue),
+    Store     = store_maps(Maps,
                            #{ ?SOPHIA_STATE_KEY      => StateData,
                               ?SOPHIA_STATE_TYPE_KEY => TypeData }),
     %% io:format("Initial state:\n~s\n", [show_store(Store)]),
@@ -83,9 +84,7 @@ set_sophia_state(Value, Store) ->
     Ptr = aeso_data:heap_value_pointer(Value),
     Mem = aeso_data:heap_value_heap(Value),
     Maps = aeso_data:heap_value_maps(Value),
-    NewStore = store_maps(Maps, Store#{?SOPHIA_STATE_KEY => <<Ptr:256, Mem/binary>>}),
-    %% io:format("NewStore:\n~s\n", [show_store(NewStore)]),
-    NewStore.
+    store_maps(Maps, Store#{?SOPHIA_STATE_KEY => <<Ptr:256, Mem/binary>>}).
 
 %% show_store(Store) ->
 %%     Show = fun(?SOPHIA_STATE_KEY)      -> "?SOPHIA_STATE_KEY";
@@ -99,14 +98,22 @@ set_sophia_state(Value, Store) ->
 
 store_maps(Maps0, Store) ->
     Maps       = maps:to_list(Maps0#maps.maps),
-    OldMapKeys = [ Id || <<Id:256>> <= maps:get(?SOPHIA_STATE_MAPS_KEY, Store, <<>>) ],
+
+    RefCounts  = get_ref_counts(Store),
+    NewRefCounts = update_ref_counts(Maps, RefCounts, Store),
+
+    OldMapKeys = maps:keys(RefCounts),
     NewMapKeys = [ Id || {Id, _} <- Maps ],
-    Garbage    = OldMapKeys -- NewMapKeys,
+    Garbage    = [ G || G <- OldMapKeys -- NewMapKeys, 0 == maps:get(G, NewRefCounts, 0) ],
+    AllMapKeys = lists:usort(NewMapKeys ++ OldMapKeys) -- Garbage,
 
     Updates = compute_map_updates(Garbage, Maps),
 
-    Store1 = Store#{ ?SOPHIA_STATE_MAPS_KEY => << <<Id:256>> || Id <- NewMapKeys >> },
-    lists:foldl(fun perform_update/2, Store1, Updates).
+    Store1 = Store#{ ?SOPHIA_STATE_MAPS_KEY => << <<Id:256>> || Id <- AllMapKeys >> },
+    NewRefCounts1 = maps:filter(fun(Id, _) -> lists:member(Id, AllMapKeys) end, NewRefCounts),
+    NewStore = set_ref_counts(NewRefCounts1, lists:foldl(fun perform_update/2, Store1, Updates)),
+    %% io:format("NewStore:\n~s\n", [show_store(NewStore)]),
+    NewStore.
 
 perform_update({new_inplace, NewId, OldId}, Store) ->
     OldKey   = <<OldId:256>>,
@@ -122,7 +129,8 @@ perform_update({delete, Id, Key}, Store) ->
     maps:remove(<<RealId:256, Key/binary>>, Store);
 perform_update({new, Id, Map0}, Store) ->
     Map = aevm_eeevm_maps:flatten_map(Store, Id, Map0),
-    Info = #{ <<Id:256>> => <<Id:256, (aeso_data:to_binary({Map#pmap.key_t, Map#pmap.val_t}))/binary>> },
+    RefCount = 0,   %% TODO
+    Info = #{ <<Id:256>> => <<Id:256, RefCount:256, (aeso_data:to_binary({Map#pmap.key_t, Map#pmap.val_t}))/binary>> },
     Data = maps:from_list(
             [ {<<Id:256, Key/binary>>, Val} || {Key, Val} <- maps:to_list(Map#pmap.data) ]),
     maps:merge(Store, maps:merge(Info, Data));
@@ -134,9 +142,70 @@ perform_update({gc, Id}, Store) ->
     maps:filter(fun(<<Id1:256, Key/binary>>, _) when Key /= <<>> -> Id1 /= RealId;
                    (_, _) -> true end, Store1).
 
+all_map_ids(Store) ->
+    [ Id || <<Id:256>> <= maps:get(?SOPHIA_STATE_MAPS_KEY, Store, <<>>) ].
+
+map_types(Id, Store) ->
+    <<_:256, _:256, Bin/binary>> = maps:get(<<Id:256>>, Store),
+    {ok, Types} = aeso_data:from_binary({tuple, [typerep, typerep]}, Bin),
+    Types.
+
 real_id(Id, Store) ->
     <<RealId:256, _/binary>> = maps:get(<<Id:256>>, Store),
     RealId.
+
+ref_count(Id, Store) ->
+    <<_:256, RefCount:256, _/binary>> = maps:get(<<Id:256>>, Store),
+    RefCount.
+
+set_ref_count(Id, RefCount, Store) ->
+    maps:update_with(<<Id:256>>,
+        fun(<<RealId:256, _:256, Info/binary>>) ->
+            <<RealId:256, RefCount:256, Info/binary>> end, Store).
+
+set_ref_counts(RefCounts, Store) ->
+    lists:foldl(fun({Id, RefCount}, St) ->
+                    set_ref_count(Id, RefCount, St)
+                end, Store, maps:to_list(RefCounts)).
+
+get_ref_counts(Store) ->
+    maps:from_list([ {Id, ref_count(Id, Store)} || Id <- all_map_ids(Store) ]).
+
+update_ref_counts([], RefCounts, _Store) ->
+    RefCounts;
+update_ref_counts([{_Id, Map} | Maps], RefCounts, Store) ->
+    case Map#pmap.data of
+        stored ->
+            %% Old map, no change to ref counts
+            update_ref_counts(Maps, RefCounts, Store);
+        Data ->
+            ValType = Map#pmap.val_t,
+            DeltaCount =
+                fun({Key, Val}, Counts) ->
+                        New =
+                            case Val of
+                                tombstone -> [];
+                                _         -> aeso_data:used_maps(ValType, Val)
+                            end,
+                        Old =
+                            case Map#pmap.parent of
+                                none -> [];
+                                PId  ->
+                                    case get_value(PId, Key, Store) of
+                                        false  -> [];
+                                        OldVal -> aeso_data:used_maps(ValType, OldVal)
+                                    end
+                            end,
+                        %% Subtract old from new
+                        Updates = [ {I, 1} || I <- New ] ++ [ {I, -1} || I <- Old ],
+                        lists:foldl(fun({I, Count}, RfC) ->
+                                        maps:update_with(I, fun(N) -> N + Count end, Count, RfC)
+                                    end, Counts, Updates)
+                end,
+            RefCounts1 = lists:foldl(DeltaCount, RefCounts, maps:to_list(Data)),
+            update_ref_counts(Maps, RefCounts1, Store)
+    end.
+
 
 compute_map_updates(Garbage, Maps0) ->
 
@@ -176,11 +245,10 @@ compute_map_updates(Garbage, Maps0) ->
 -spec get_sophia_state(aect_contracts:store()) -> aeso_data:heap_value().
 get_sophia_state(Store) ->
     <<Ptr:256, Heap/binary>> = maps:get(?SOPHIA_STATE_KEY, Store, <<>>),
-    MapKeys = [ MapId || <<MapId:256>> <= maps:get(?SOPHIA_STATE_MAPS_KEY, Store, <<>>) ],
+    MapKeys = all_map_ids(Store),
     Maps = maps:from_list(
         [ begin
-              <<_:256, Bin/binary>> = maps:get(<<MapId:256>>, Store),
-              {ok, {KeyT, ValT}} = aeso_data:from_binary({tuple, [typerep, typerep]}, Bin),
+              {KeyT, ValT} = map_types(MapId, Store),
               {MapId, #pmap{ key_t = KeyT, val_t = ValT, parent = none, data = stored }}
           end || MapId <- MapKeys ]),
     aeso_data:heap_value(#maps{next_id = lists:max([-1 | MapKeys]) + 1, maps = Maps}, Ptr, Heap, 32).
@@ -204,13 +272,16 @@ get_map_data(MapId, Store) ->
             MapId1 == RealMapId, Key /= <<>> ]),
     Res.
 
+get_value(Id, Key, Store) ->
+    RealId = real_id(Id, Store),
+    maps:get(<<RealId:256, Key/binary>>, Store, false).
+
 -spec map_lookup(aevm_eeevm_maps:map_id(), binary(), aevm_eeevm_state:state()) -> binary() | false.
 map_lookup(Id, Key, State) ->
     %% TODO: clean up!
     #{ chain_api := ChainAPI, chain_state := ChainState } = State,
     Store = ChainAPI:get_store(ChainState),
-    RealId = real_id(Id, Store),
-    maps:get(<<RealId:256, Key/binary>>, Store, false).
+    get_value(Id, Key, Store).
 
 -spec next_map_id(aect_contracts:store()) -> aevm_eeevm_maps:map_id().
 next_map_id(#{?SOPHIA_STATE_MAPS_KEY := MapKeys}) ->

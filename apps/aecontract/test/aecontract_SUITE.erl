@@ -2273,7 +2273,14 @@ sophia_map_of_maps(_Cfg) ->
     state(aect_test_utils:new_state()),
     Acc = ?call(new_account, 1000000000),
     {Ct, _Gas} = ?call(create_contract, Acc, map_of_maps, {}, #{gas => 1000000, return_gas_used => true}),
-    {some, <<"black king">>} = ?call(call_contract, Acc, Ct, piece, {option, string}, {8, 5}),
+    {some, <<"black king">>}  = ?call(call_contract, Acc, Ct, piece, {option, string}, {8, 5}),
+    {some, <<"white queen">>} = ?call(call_contract, Acc, Ct, piece, {option, string}, {1, 4}),
+    {some, <<"black pawn">>}  = ?call(call_contract, Acc, Ct, piece, {option, string}, {7, 2}),
+    {}                        = ?call(call_contract, Acc, Ct, move_piece, {tuple, []}, {1, 4, 7, 2}),
+    {some, <<"white queen">>} = ?call(call_contract, Acc, Ct, piece, {option, string}, {7, 2}),
+    {some, <<"black pawn">>}  = ?call(call_contract, Acc, Ct, piece, {option, string}, {7, 1}),
+    {}                        = ?call(call_contract, Acc, Ct, delete_row, {tuple, []}, 7),
+    none                      = ?call(call_contract, Acc, Ct, piece, {option, string}, {7, 1}),
     ok.
 
 sophia_variant_types(_Cfg) ->
