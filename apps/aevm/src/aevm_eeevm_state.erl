@@ -181,19 +181,12 @@ get_store(#{chain_api := ChainAPI, chain_state := ChainState}) ->
 import_state_from_store(Store, State) ->
     case aevm_eeevm_store:get_sophia_state_type(Store) of
         false -> State;  %% No state yet (init function)
-        StateType ->
-            Addr       = 32,
+        _StateType ->
+            %% The state value in the store already has the correct offset (32),
+            %% so no need to translate it.
             StateValue = aevm_eeevm_store:get_sophia_state(Store),
-            {ok, StateValue1} = aeso_data:heap_to_heap(StateType, Store, StateValue, Addr),
-            %% TODO: Totally not an appropriate solution, but just to get a
-            %% little further: don't throw out any stored maps.
-            HackHackHack = aeso_data:heap_value_maps(StateValue),
-            StateValue2 = aeso_data:heap_value(HackHackHack,
-                                               aeso_data:heap_value_pointer(StateValue1),
-                                               aeso_data:heap_value_heap(StateValue1),
-                                               aeso_data:heap_value_offset(StateValue1)),
-
-            {StatePtr, State1} = write_heap_value(StateValue2, State),
+            32 = aeso_data:heap_value_offset(StateValue),
+            {StatePtr, State1} = write_heap_value(StateValue, State),
             aevm_eeevm_memory:store(0, StatePtr, State1)
     end.
 
