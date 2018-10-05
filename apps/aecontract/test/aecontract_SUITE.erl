@@ -61,6 +61,7 @@
         , sophia_map_benchmark/1
         , sophia_pmaps/1
         , sophia_map_of_maps/1
+        , sophia_chess/1
         , sophia_variant_types/1
         , sophia_chain/1
         , sophia_savecoinbase/1
@@ -2269,10 +2270,10 @@ sophia_pmaps(_Cfg) ->
     {} = ?call(call_contract, Acc, Ct, double_insert_state, {tuple, []}, {<<"side">>, <<"left">>, <<"right">>}),
     ok.
 
-sophia_map_of_maps(_Cfg) ->
+sophia_chess(_Cfg) ->
     state(aect_test_utils:new_state()),
     Acc = ?call(new_account, 1000000000),
-    {Ct, _Gas} = ?call(create_contract, Acc, map_of_maps, {}, #{gas => 1000000, return_gas_used => true}),
+    {Ct, _Gas} = ?call(create_contract, Acc, chess, {}, #{gas => 1000000, return_gas_used => true}),
     {some, <<"black king">>}  = ?call(call_contract, Acc, Ct, piece, {option, string}, {8, 5}),
     {some, <<"white queen">>} = ?call(call_contract, Acc, Ct, piece, {option, string}, {1, 4}),
     {some, <<"black pawn">>}  = ?call(call_contract, Acc, Ct, piece, {option, string}, {7, 2}),
@@ -2281,6 +2282,19 @@ sophia_map_of_maps(_Cfg) ->
     {some, <<"black pawn">>}  = ?call(call_contract, Acc, Ct, piece, {option, string}, {7, 1}),
     {}                        = ?call(call_contract, Acc, Ct, delete_row, {tuple, []}, 7),
     none                      = ?call(call_contract, Acc, Ct, piece, {option, string}, {7, 1}),
+    ok.
+
+sophia_map_of_maps(_Cfg) ->
+    state(aect_test_utils:new_state()),
+    Acc = ?call(new_account, 1000000000),
+    {Ct, _Gas} = ?call(create_contract, Acc, map_of_maps, {}, #{gas => 1000000, return_gas_used => true}),
+    {}         = ?call(call_contract, Acc, Ct, setup_state, {tuple, []}, {}),
+
+    %% Test 1 - garbage collection of inner map when outer map is garbage collected
+    Empty = #{},
+    {}    = ?call(call_contract, Acc, Ct, test1_setup, {tuple, []}, {}),
+    {}    = ?call(call_contract, Acc, Ct, test1_execute, {tuple, []}, {}),
+    Empty = ?call(call_contract, Acc, Ct, test1_check, {pmap, string, string}, {}),
     ok.
 
 sophia_variant_types(_Cfg) ->

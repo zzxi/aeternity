@@ -2,52 +2,35 @@
 contract MapOfMaps =
 
   type board = pmap(int, pmap(int, string))
-  type state = board
+  type pmap2('a, 'b, 'c) = pmap('a, pmap('b, 'c))
 
-  private function get_row(r, m : board) =
-    switch(PMap.get(r, m))
-      None     => PMap.empty()
-      Some(rm) => rm
+  record state = { big1   : pmap2(string, string, string),
+                   big2   : pmap2(string, string, string),
+                   small1 : pmap(string, string),
+                   small2 : pmap(string, string)  }
 
-  private function set_piece(r, c, p, m : board) =
-    PMap.put(r, PMap.put(c, p, get_row(r, m)), m)
+  private function empty_state() =
+    { big1   = PMap.empty(), big2   = PMap.empty(),
+      small1 = PMap.empty(), small2 = PMap.empty() }
 
-  private function get_piece(r, c, m : board) =
-    PMap.get(c, get_row(r, m))
+  function init() = empty_state()
 
-  private function from_list(xs, m : board) =
-    switch(xs)
-      []              => m
-      (r, c, p) :: xs => from_list(xs, set_piece(r, c, p, m))
+  function setup_state() =
+    let small = PMap.put("key", "val", PMap.empty())
+    put({ big1 = PMap.put("one", small, PMap.empty()),
+          big2 = PMap.put("two", small, PMap.empty()),
+          small1 = small,
+          small2 = small })
 
-  function init() =
-    from_list([ (2, 1, "white pawn"),   (7, 1, "black pawn")
-              , (2, 2, "white pawn"),   (7, 2, "black pawn")
-              , (2, 3, "white pawn"),   (7, 3, "black pawn")
-              , (2, 4, "white pawn"),   (7, 4, "black pawn")
-              , (2, 5, "white pawn"),   (7, 5, "black pawn")
-              , (2, 6, "white pawn"),   (7, 6, "black pawn")
-              , (2, 7, "white pawn"),   (7, 7, "black pawn")
-              , (2, 8, "white pawn"),   (7, 8, "black pawn")
-              , (1, 1, "white rook"),   (8, 1, "black rook")
-              , (1, 2, "white knight"), (8, 2, "black knight")
-              , (1, 3, "white bishop"), (8, 3, "black bishop")
-              , (1, 4, "white queen"),  (8, 4, "black queen")
-              , (1, 5, "white king"),   (8, 5, "black king")
-              , (1, 6, "white bishop"), (8, 6, "black bishop")
-              , (1, 7, "white knight"), (8, 7, "black knight")
-              , (1, 8, "white rook"),   (8, 8, "black rook")
-              ], PMap.empty())
+  // -- Garbage collection of inner map when outer map is garbage collected
+  function test1_setup() =
+    let inner = PMap.put("key", "val", PMap.empty())
+    put(empty_state() { big1 = PMap.put("one", inner, PMap.empty()) })
 
-  function piece(r, c) = get_piece(r, c, state)
+  function test1_execute() =
+    put(state{ big1 = PMap.empty() })
 
-  function move_piece(r, c, r1, c1) =
-    switch(piece(r, c))
-      Some(p) => put(set_piece(r1, c1, p, state))
+  function test1_check() =
+    state.big1
 
-  function destroy_piece(r, c) =
-    put(PMap.put(r, PMap.delete(c, get_row(r, state)), state))
-
-  function delete_row(r) =
-    put(PMap.delete(r, state))
 

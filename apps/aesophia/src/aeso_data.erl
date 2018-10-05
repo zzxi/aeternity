@@ -15,6 +15,7 @@
         , heap_value_offset/1
         , heap_value_heap/1
         , used_maps/2
+        , has_maps/1
         , from_binary/2
         , from_binary/3
         , get_function_from_calldata/1

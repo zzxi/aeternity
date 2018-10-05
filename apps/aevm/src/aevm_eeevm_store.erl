@@ -100,10 +100,11 @@ store_maps(Maps0, Store) ->
     Maps       = maps:to_list(Maps0#maps.maps),
 
     RefCounts  = get_ref_counts(Store),
-    NewRefCounts = update_ref_counts(Maps, RefCounts, Store),
-
     OldMapKeys = maps:keys(RefCounts),
     NewMapKeys = [ Id || {Id, _} <- Maps ],
+
+    NewRefCounts = update_ref_counts(OldMapKeys, NewMapKeys, Maps, RefCounts, Store),
+
     Garbage    = [ G || G <- OldMapKeys -- NewMapKeys, 0 == maps:get(G, NewRefCounts, 0) ],
     AllMapKeys = lists:usort(NewMapKeys ++ OldMapKeys) -- Garbage,
 
@@ -171,13 +172,43 @@ set_ref_counts(RefCounts, Store) ->
 get_ref_counts(Store) ->
     maps:from_list([ {Id, ref_count(Id, Store)} || Id <- all_map_ids(Store) ]).
 
-update_ref_counts([], RefCounts, _Store) ->
+update_ref_counts(OldMapKeys, NewMapKeys, Maps, RefCounts, Store) ->
+    RefCounts1       = update_ref_counts1(Maps, RefCounts, Store),
+    PotentialGarbage = OldMapKeys -- NewMapKeys,
+    ref_count_garbage(PotentialGarbage, [], Maps, RefCounts1, Store).
+
+ref_count_garbage(PotentialGarbage, ActualGarbage, Maps, RefCounts, Store) ->
+    Garbage = [ G || G <- PotentialGarbage, 0 == maps:get(G, RefCounts, 0) ],
+    {ActualGarbage1, _} = do_inplace_assignment(Garbage, Maps),
+    case ActualGarbage1 -- ActualGarbage of
+        []         ->  RefCounts;    %% No new garbage
+        NewGarbage ->
+            RefCounts1 = lists:foldl(fun(Id, RfC) -> gc_ref_count(Id, RfC, Store) end,
+                                     RefCounts, NewGarbage),
+            ref_count_garbage(PotentialGarbage, ActualGarbage1, Maps, RefCounts1, Store)
+    end.
+
+gc_ref_count(Id, RefCounts, Store) ->
+    {_, ValType} = map_types(Id, Store),
+    case aeso_data:has_maps(ValType) of
+        false -> RefCounts; %% Nothing to do if there are no nested maps
+        true  ->
+            UsedMaps =
+                lists:append([ aeso_data:used_maps(ValType, Val)
+                                || {<<Id1:256, Key/binary>>, Val} <- maps:to_list(Store),
+                                   Id1 == Id, Key /= <<>> ]),
+            lists:foldl(fun(Used, RfC) ->
+                            maps:update_with(Used, fun(N) -> N - 1 end, RfC)
+                        end, RefCounts, UsedMaps)
+    end.
+
+update_ref_counts1([], RefCounts, _Store) ->
     RefCounts;
-update_ref_counts([{_Id, Map} | Maps], RefCounts, Store) ->
+update_ref_counts1([{_Id, Map} | Maps], RefCounts, Store) ->
     case Map#pmap.data of
         stored ->
             %% Old map, no change to ref counts
-            update_ref_counts(Maps, RefCounts, Store);
+            update_ref_counts1(Maps, RefCounts, Store);
         Data ->
             ValType = Map#pmap.val_t,
             DeltaCount =
@@ -203,15 +234,10 @@ update_ref_counts([{_Id, Map} | Maps], RefCounts, Store) ->
                                     end, Counts, Updates)
                 end,
             RefCounts1 = lists:foldl(DeltaCount, RefCounts, maps:to_list(Data)),
-            update_ref_counts(Maps, RefCounts1, Store)
+            update_ref_counts1(Maps, RefCounts1, Store)
     end.
 
-
-compute_map_updates(Garbage, Maps0) ->
-
-    %% Ignore maps that are already in the store.
-    Maps       = [ E || {_, #pmap{ data = D }} = E <- Maps0, D /= stored ],
-
+do_inplace_assignment(Garbage, Maps) ->
     %% Which maps can be updated inplace? Only _one_ map can be an inplace
     %% update of a given parent (hence parent as key).
     InplaceAssignment =
@@ -221,12 +247,23 @@ compute_map_updates(Garbage, Maps0) ->
     Inplace    = [ E || E = {Id, #pmap{ parent = P }} <- Maps,
                         Id == maps:get(P, InplaceAssignment, none) ],
 
-    %% Any map that can't be updated in place needs to be copied.
-    Copy       = [ E || E = {Id, _} <- Maps, not lists:keymember(Id, 1, Inplace) ],
-
     %% Unused maps that are not used for inplace updates should be garbage
     %% collected.
     ActualGarbage = Garbage -- [ P || {_, #pmap{ parent = P }} <- Inplace ],
+
+    {ActualGarbage, Inplace}.
+
+
+compute_map_updates(Garbage, Maps0) ->
+
+    %% Ignore maps that are already in the store.
+    Maps = [ E || {_, #pmap{ data = D }} = E <- Maps0, D /= stored ],
+
+    %% Whenever possible we should do inplace updates of maps
+    {ActualGarbage, Inplace} = do_inplace_assignment(Garbage, Maps),
+
+    %% Any map that can't be updated in place needs to be copied.
+    Copy       = [ E || E = {Id, _} <- Maps, not lists:keymember(Id, 1, Inplace) ],
 
     lists:flatten(
         %% Copy first since inplace update might destroy data needed by the
