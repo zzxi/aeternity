@@ -651,35 +651,8 @@ account_balance(PubKey, S) ->
 
 make_calldata(Fun, Args0) ->
     Args         = translate_pubkeys(if is_tuple(Args0) -> Args0; true -> {Args0} end),
-    CalldataType = {tuple, [string, infer_type(Args)]},
+    CalldataType = {tuple, [string, aeso_abi:get_type(Args)]},
     aeso_data:to_binary({CalldataType, {list_to_binary(atom_to_list(Fun)), Args}}).
-
-%% TODO: somewhere more convenient?
-infer_type(N) when is_integer(N) -> word;
-infer_type(S) when is_binary(S)  -> string;
-infer_type(word)                 -> typerep;
-infer_type(string)               -> typerep;
-infer_type({list, _})            -> typerep;
-infer_type({tuple, _})           -> typerep;
-infer_type({variant, _})         -> typerep;
-infer_type({map, _, _})          -> typerep;
-infer_type(none)                 -> option_t(word);
-infer_type({some, X})            -> option_t(infer_type(X));
-infer_type([])                   -> {list, word};
-infer_type([H | _])              -> {list, infer_type(H)};
-infer_type(M) when is_map(M) ->
-    {KeyT, ValT} =
-        case maps:to_list(M) of
-            [] -> {word, word};
-            [{K, V} | _] -> {infer_type(K), infer_type(V)}
-        end,
-    {map, KeyT, ValT};
-infer_type({variant, Tag, Args}) ->
-    {variant, lists:duplicate(Tag, []) ++ [lists:map(fun infer_type/1, Args)]};
-infer_type(T) when is_tuple(T) ->
-    {tuple, [ infer_type(X) || X <- tuple_to_list(T) ]}.
-
-option_t(T) -> {variant, [[], [T]]}.
 
 translate_pubkeys(<<N:256>>) -> N;
 translate_pubkeys([H|T]) ->
