@@ -167,12 +167,17 @@ init_vm(State, Code, Mem, Store) ->
             %% Calldata can contain maps, so we can't simply write it
             %% to memory. The calldata should be a pair of a typerep
             %% and the actual calldata.
-            HeapSize   = aevm_eeevm_memory:size_in_words(State2) * 32,
-            {ok, {Type}} = aeso_data:from_binary({tuple, [typerep]}, Calldata),
-            {ok, CalldataHeap} = aeso_data:binary_to_heap({tuple, [typerep, Type]}, Calldata,
-                                                          aevm_eeevm_maps:next_id(maps(State2)), HeapSize),
-            {Ptr, State3} = write_heap_value(CalldataHeap, State2),
-            aevm_eeevm_stack:push(Ptr, State3)
+            HeapSize = aevm_eeevm_memory:size_in_words(State2) * 32,
+            case aeso_data:from_binary({tuple, [typerep]}, Calldata) of
+                {ok, {Type}} ->
+                    {ok, CalldataHeap} = aeso_data:binary_to_heap({tuple, [typerep, Type]}, Calldata,
+                                                                  aevm_eeevm_maps:next_id(maps(State2)), HeapSize),
+                    {Ptr, State3} = write_heap_value(CalldataHeap, State2),
+                    aevm_eeevm_stack:push(Ptr, State3);
+                {error, Err} ->
+                    io:format("** Error invalid calldata: ~p\n", [Err]),
+                    set_gas(0, State2)
+            end
     end.
 
 get_store(#{chain_api := ChainAPI, chain_state := ChainState}) ->
