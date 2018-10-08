@@ -1,19 +1,17 @@
 
 contract Chess =
 
-  type board = pmap(int, pmap(int, string))
+  type board = map(int, map(int, string))
   type state = board
 
   private function get_row(r, m : board) =
-    switch(PMap.get(r, m))
-      None     => PMap.empty()
-      Some(rm) => rm
+    Map.lookup_default(r, m, {})
 
   private function set_piece(r, c, p, m : board) =
-    PMap.put(r, PMap.put(c, p, get_row(r, m)), m)
+    m { [r] = get_row(r, m) { [c] = p } }
 
   private function get_piece(r, c, m : board) =
-    PMap.get(c, get_row(r, m))
+    Map.lookup(c, get_row(r, m))
 
   private function from_list(xs, m : board) =
     switch(xs)
@@ -37,7 +35,7 @@ contract Chess =
               , (1, 6, "white bishop"), (8, 6, "black bishop")
               , (1, 7, "white knight"), (8, 7, "black knight")
               , (1, 8, "white rook"),   (8, 8, "black rook")
-              ], PMap.empty())
+              ], {})
 
   function piece(r, c) = get_piece(r, c, state)
 
@@ -46,8 +44,8 @@ contract Chess =
       Some(p) => put(set_piece(r1, c1, p, state))
 
   function destroy_piece(r, c) =
-    put(PMap.put(r, PMap.delete(c, get_row(r, state)), state))
+    put(state{ [r] = Map.delete(c, get_row(r, state)) })
 
   function delete_row(r) =
-    put(PMap.delete(r, state))
+    put(Map.delete(r, state))
 

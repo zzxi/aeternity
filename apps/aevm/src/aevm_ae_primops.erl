@@ -300,12 +300,12 @@ map_call_get(Data, State) ->
     {ok, {ok, Res}, 0, State}.
 
 map_call_put(Data, State) ->
-    [MapId]       = get_args([word], Data),
-    {KeyType, ValType} = aevm_eeevm_maps:map_type(MapId, State),
+    [MapId]             = get_args([word], Data),
+    {KeyType, ValType}  = aevm_eeevm_maps:map_type(MapId, State),
     [_, KeyPtr, ValPtr] = get_args([word, word, word], Data),
     {ok, KeyBin}        = aevm_eeevm_state:heap_to_binary(KeyType, KeyPtr, State),
     {ok, ValBin}        = aevm_eeevm_state:heap_to_heap(ValType, ValPtr, State),
-    {NewMapId, State1} = aevm_eeevm_maps:put(MapId, KeyBin, ValBin, State),
+    {NewMapId, State1}  = aevm_eeevm_maps:put(MapId, KeyBin, ValBin, State),
     {ok, {ok, <<NewMapId:256>>}, 0, State1}.
 
 map_call_delete(Data, State) ->

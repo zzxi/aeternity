@@ -162,8 +162,8 @@ convert(Input, Output, Store, Visited, {list, T}, Val, Heap, BaseAddr) ->
         Nil -> {Nil, {no_maps(Heap), 0, []}};
         _   -> convert(Input, Output, Store, Visited, {tuple, [T, {list, T}]}, Val, Heap, BaseAddr)
     end;
-convert(Input, binary, Store, Visited, {pmap, KeyT, ValT}, MapId, Heap, BaseAddr) ->
-    {_NoMaps, Map0} = convert_map(Input, binary, Store, Visited, KeyT, ValT, MapId, Heap),
+convert(Input, binary, Store, _Visited, {map, KeyT, ValT}, MapId, Heap, BaseAddr) ->
+    {_NoMaps, Map0} = convert_map(Input, binary, Store, KeyT, ValT, MapId, Heap),
     %% Will be a no-op if Input == binary
     Map  = aevm_eeevm_maps:flatten_map(Store, MapId, Map0),
     KVs  = maps:to_list(Map#pmap.data),
@@ -179,8 +179,8 @@ convert(Input, binary, Store, Visited, {pmap, KeyT, ValT}, MapId, Heap, BaseAddr
     Mem  = lists:reverse(RMem),
     %% Target is binary so no maps required
     {BaseAddr, {no_maps(Heap), FinalBase - BaseAddr, [<<Size:256>>, Mem]}};
-convert(Input, heap, Store, Visited, {pmap, KeyT, ValT}, Ptr, Heap, _BaseAddr) ->
-    {InnerMaps, PMap} = convert_map(Input, heap, Store, Visited, KeyT, ValT, Ptr, Heap),
+convert(Input, heap, Store, _Visited, {map, KeyT, ValT}, Ptr, Heap, _BaseAddr) ->
+    {InnerMaps, PMap} = convert_map(Input, heap, Store, KeyT, ValT, Ptr, Heap),
     case PMap#pmap.data of
         stored -> %% Keep the id of stored maps (only possible if Input == heap)
             Maps = InnerMaps#maps{ maps = (InnerMaps#maps.maps)#{ Ptr => PMap } },
@@ -238,28 +238,29 @@ get_map(binary, KeyT, ValT, Ptr, Heap) ->
     Map  = map_binary_to_heap(Size, Heap, Ptr + 32),
     #pmap{ key_t = KeyT, val_t = ValT, parent = none, data = Map }.
 
-convert_map(Input, Output, Store, Visited, KeyT, ValT, Ptr, Heap) ->
+convert_map(Input, Output, Store, KeyT, ValT, Ptr, Heap) ->
     Map = #pmap{ data = Data } = get_map(Input, KeyT, ValT, Ptr, Heap),
     {InnerMaps, Data1} =
-        convert_map_values(Input, Output, Store, Visited, ValT, Data, Heap),
+        convert_map_values(Input, Output, Store, ValT, Data, Heap),
     {InnerMaps, Map#pmap{ data = Data1 }}.
 
-convert_map_values(_, _, _Store, _Visited, _ValT, stored, Heap) ->
+convert_map_values(_, _, _Store, _ValT, stored, Heap) ->
     {no_maps(Heap), stored};
-convert_map_values(Input, Output, Store, Visited, ValT, Data, Heap) ->
+convert_map_values(Input, Output, Store, ValT, Data, Heap) ->
     KVs = maps:to_list(Data),
     {Maps, Data1} =
         lists:foldl(fun({K, V}, {VMaps, D}) ->
                         Heap1 = set_next_id(Heap, VMaps#maps.next_id),
-                        {VMaps1, V1} = convert_map_value(Input, Output, Store, Visited, ValT, V, Heap1),
+                        {VMaps1, V1} = convert_map_value(Input, Output, Store, ValT, V, Heap1),
                         {merge_maps(VMaps, VMaps1), D#{ K => V1 }}
                     end, {no_maps(Heap), #{}}, KVs),
     {Maps, Data1}.
 
-convert_map_value(_Input, _Output, _Store, _Visited, _ValT, tombstone, Heap) ->
+convert_map_value(_Input, _Output, _Store, _ValT, tombstone, Heap) ->
     {no_maps(Heap), tombstone};
-convert_map_value(Input, Output, Store, Visited, ValT, <<ValPtr:256, ValBin/binary>>, Heap) ->
+convert_map_value(Input, Output, Store, ValT, <<ValPtr:256, ValBin/binary>>, Heap) ->
     ValHeap = heap_fragment(Heap#heap.maps, 32, ValBin),
+    Visited = #{},  %% Map values are self contained so start with fresh circularity check
     {ValPtr1, {Maps, _Size, ValBin1}} = convert(Input, Output, Store, Visited, ValT, ValPtr, ValHeap, 32),
     {Maps, <<ValPtr1:256, (list_to_binary(ValBin1))/binary>>}.
 
@@ -269,7 +270,7 @@ convert_map_value(Input, Output, Store, Visited, ValT, <<ValPtr:256, ValBin/bina
 used_maps(Type, <<Ptr:256, Mem/binary>>) ->
     used_maps(#{}, Type, Ptr, heap_fragment(32, Mem)).
 
-has_maps({pmap, _, _})  -> true;
+has_maps({map, _, _})   -> true;
 has_maps(word)          -> false;
 has_maps(string)        -> false;
 has_maps(typerep)       -> false;
@@ -283,7 +284,7 @@ used_maps(Visited, Type, Ptr, Heap) ->
         true  -> used_maps1(Visited, Type, Ptr, Heap)
     end.
 
-used_maps1(_, {pmap, _, _}, Id, _) -> [Id];
+used_maps1(_, {map, _, _}, Id, _) -> [Id];
 used_maps1(Visited, {list, T}, Val, Heap) ->
     <<Nil:256>> = <<(-1):256>>,   %% empty list is -1
     case Val of
@@ -334,17 +335,15 @@ to_binary1({list, T}, Address)       -> to_binary1({?TYPEREP_LIST_TAG, T}, Addre
 to_binary1({option, T}, Address)     -> to_binary1({variant, [[], [T]]}, Address);
 to_binary1({tuple, Ts}, Address)     -> to_binary1({?TYPEREP_TUPLE_TAG, Ts}, Address);
 to_binary1({variant, Cons}, Address) -> to_binary1({?TYPEREP_VARIANT_TAG, Cons}, Address);
-to_binary1({pmap, K, V}, Address)    -> to_binary1({?TYPEREP_MAP_TAG, K, V}, Address);
+to_binary1({map, K, V}, Address)     -> to_binary1({?TYPEREP_MAP_TAG, K, V}, Address);
 to_binary1({variant, Tag, Args}, Address) ->
     to_binary1(list_to_tuple([Tag | Args]), Address);
-to_binary1({pmap, Map}, Address) -> %% TODO: Remove tag when replacing map with pmap
+to_binary1(Map, Address) when is_map(Map) ->
     Size = maps:size(Map),
     %% Sort according to binary ordering
     KVs = lists:sort([ {to_binary(K), to_binary(V)} || {K, V} <- maps:to_list(Map) ]),
     {Address, <<Size:256, << <<(byte_size(K)):256, K/binary,
                                (byte_size(V)):256, V/binary>> || {K, V} <- KVs >>/binary >>};
-to_binary1(Map, Address) when is_map(Map) ->
-    to_binary1(maps:to_list(Map), Address);
 to_binary1({}, _Address) ->
     {0, <<>>};
 to_binary1(Data, Address) when is_tuple(Data) ->
@@ -451,12 +450,10 @@ from_binary(Visited, {variant_t, TCons}, Heap, V) ->   %% Tagged variants
         []  -> Tag;
         _   -> list_to_tuple([Tag | Args])
     end;
-from_binary(_Visited, {pmap, A, B}, Heap, Ptr) ->
+from_binary(_Visited, {map, A, B}, Heap, Ptr) ->
     %% FORMAT: [Size] [KeySize] Key [ValSize] Val .. [KeySize] Key [ValSize] Val
     Size = heap_word(Heap, Ptr),
     map_binary_to_value(A, B, Size, Heap, Ptr + 32);
-from_binary(Visited, {map, A, B}, Heap, V) ->
-    maps:from_list(from_binary(Visited, {list, {tuple, [A, B]}}, Heap, V));
 from_binary(Visited, typerep, Heap, V) ->
     check_circular_refs(Visited, V),
     Tag = heap_word(Heap, V),
@@ -466,10 +463,10 @@ from_binary(Visited, typerep, Heap, V) ->
         ?TYPEREP_WORD_TAG    -> word;
         ?TYPEREP_STRING_TAG  -> string;
         ?TYPEREP_TYPEREP_TAG -> typerep;
-        ?TYPEREP_LIST_TAG    -> {list,   Arg(typerep)};
-        ?TYPEREP_TUPLE_TAG   -> {tuple,  Arg({list, typerep})};
+        ?TYPEREP_LIST_TAG    -> {list,    Arg(typerep)};
+        ?TYPEREP_TUPLE_TAG   -> {tuple,   Arg({list, typerep})};
         ?TYPEREP_VARIANT_TAG -> {variant, Arg({list, {list, typerep}})};
-        ?TYPEREP_MAP_TAG     -> {pmap,    Arg(typerep), Arg1(typerep, 2)}
+        ?TYPEREP_MAP_TAG     -> {map,     Arg(typerep), Arg1(typerep, 2)}
     end.
 
 map_binary_to_value(KeyType, ValType, N, Bin, Ptr) ->

@@ -194,12 +194,12 @@ do_return(Us0, Us1, State) ->
     case vm_version(State) of
         ?AEVM_01_Sophia_01 ->
             try
-            %% In Sophia Us0 is a pointer to a typerep for the return value, and
-            %% Us1 is a pointer to the actual value.
-            Heap       = mem(State),
-            {ok, Type} = aeso_data:from_heap(typerep, Heap, Us0),
-            {ok, Out}  = aeso_data:heap_to_binary(Type, get_store(State), aeso_data:heap_value(maps(State), Us1, Heap)),
-            set_out(Out, State)
+                %% In Sophia Us0 is a pointer to a typerep for the return value, and
+                %% Us1 is a pointer to the actual value.
+                Heap       = mem(State),
+                {ok, Type} = aeso_data:from_heap(typerep, Heap, Us0),
+                {ok, Out}  = aeso_data:heap_to_binary(Type, get_store(State), aeso_data:heap_value(maps(State), Us1, Heap)),
+                set_out(Out, State)
             catch _:_ ->
                 io:format("** Error reading return value\n~s", [format_mem(mem(State))]),
                 set_gas(0, State)   %% Consume all gas on failure

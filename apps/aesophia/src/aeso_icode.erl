@@ -65,9 +65,8 @@ builtin_types() ->
      , "oracle_query" => fun([_, _]) -> word end
      , "list"         => fun([A]) -> {list, A} end
      , "option"       => fun([A]) -> {variant, [[], [A]]} end
-     , "map"          => fun([K, V]) -> map_typerep(K, V) end
+     , "map"          => fun([K, V]) -> {map, K, V} end
      , ["Chain", "ttl"] => fun([]) -> {variant, [[word], [word]]} end
-     , "pmap"         => fun([K, V]) -> {pmap, K, V} end    %% TODO: should replace map later
      }.
 
 builtin_constructors() ->
@@ -77,7 +76,7 @@ builtin_constructors() ->
      , "Some"        => 1 }.
 
 map_typerep(K, V) ->
-    {list, {tuple, [K, V]}}.  %% Lists of key-value pairs for now
+    {map, K, V}.
 
 option_typerep(A) ->
     {variant, [[], [A]]}.

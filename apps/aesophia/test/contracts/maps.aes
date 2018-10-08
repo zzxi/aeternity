@@ -63,16 +63,16 @@ contract Maps =
   function delete_state_s(k) = put(state{ map_s = delete_s(k, state.map_s) })
 
   // Map.size
-  function size_i(m : map(int,    pt)) = Map.size(m)
-  function size_s(m : map(string, pt)) = Map.size(m)
-  function size_state_i() = size_i(state.map_i)
-  function size_state_s() = size_s(state.map_s)
+  // function size_i(m : map(int,    pt)) = Map.size(m)
+  // function size_s(m : map(string, pt)) = Map.size(m)
+  // function size_state_i() = size_i(state.map_i)
+  // function size_state_s() = size_s(state.map_s)
 
   // Map.to_list
-  function tolist_i(m : map(int,    pt)) = Map.to_list(m)
-  function tolist_s(m : map(string, pt)) = Map.to_list(m)
-  function tolist_state_i() = tolist_i(state.map_i)
-  function tolist_state_s() = tolist_s(state.map_s)
+  // function tolist_i(m : map(int,    pt)) = Map.to_list(m)
+  // function tolist_s(m : map(string, pt)) = Map.to_list(m)
+  // function tolist_state_i() = tolist_i(state.map_i)
+  // function tolist_state_s() = tolist_s(state.map_s)
 
   // Map.from_list
   function fromlist_i(xs : list((int,    pt))) = Map.from_list(xs)

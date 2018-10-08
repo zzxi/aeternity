@@ -1,34 +1,34 @@
 
 contract MapOfMaps =
 
-  type board = pmap(int, pmap(int, string))
-  type pmap2('a, 'b, 'c) = pmap('a, pmap('b, 'c))
+  type board = map(int, map(int, string))
+  type map2('a, 'b, 'c) = map('a, map('b, 'c))
 
-  record state = { big1   : pmap2(string, string, string),
-                   big2   : pmap2(string, string, string),
-                   small1 : pmap(string, string),
-                   small2 : pmap(string, string)  }
+  record state = { big1   : map2(string, string, string),
+                   big2   : map2(string, string, string),
+                   small1 : map(string, string),
+                   small2 : map(string, string)  }
 
   private function empty_state() =
-    { big1   = PMap.empty(), big2   = PMap.empty(),
-      small1 = PMap.empty(), small2 = PMap.empty() }
+    { big1   = {}, big2   = {},
+      small1 = {}, small2 = {} }
 
   function init() = empty_state()
 
   function setup_state() =
-    let small = PMap.put("key", "val", PMap.empty())
-    put({ big1 = PMap.put("one", small, PMap.empty()),
-          big2 = PMap.put("two", small, PMap.empty()),
+    let small = {["key"] = "val"}
+    put({ big1 = {["one"] = small},
+          big2 = {["two"] = small},
           small1 = small,
           small2 = small })
 
   // -- Garbage collection of inner map when outer map is garbage collected
   function test1_setup() =
-    let inner = PMap.put("key", "val", PMap.empty())
-    put(empty_state() { big1 = PMap.put("one", inner, PMap.empty()) })
+    let inner = {["key"] = "val"}
+    put(empty_state() { big1 = {["one"] = inner} })
 
   function test1_execute() =
-    put(state{ big1 = PMap.empty() })
+    put(state{ big1 = {} })
 
   function test1_check() =
     state.big1
