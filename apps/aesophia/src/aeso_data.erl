@@ -29,7 +29,7 @@
 
 -record(heap, { maps   :: #maps{},
                 offset :: offset(),
-                heap   :: binary() }).
+                heap   :: binary() | #{non_neg_integer() => non_neg_integer()} }).
 
 -type store() :: aect_contracts:store().  %% #{ binary() => binary() }
 
@@ -518,7 +518,6 @@ heap_word(Heap, Addr) when is_map(Heap) ->
     0 = Addr rem 32, %% Check that it's word aligned.
     maps:get(Addr, Heap, 0).
 
--spec get_word(heap_fragment(), pointer()) -> word().
 get_word(#heap{offset = Offs, heap = Mem}, Addr) when Addr >= Offs ->
     get_word(Mem, Addr - Offs);
 get_word(Mem, Addr) when is_binary(Mem) ->
@@ -528,7 +527,6 @@ get_word(Mem, Addr) when is_map(Mem) ->
     0 = Addr rem 32,
     maps:get(Addr, Mem, 0).
 
--spec get_chunk(heap_fragment(), pointer(), non_neg_integer()) -> binary().
 get_chunk(#heap{offset = Offs, heap = Mem}, Addr, Bytes) when Addr >= Offs ->
     get_chunk(Mem, Addr - Offs, Bytes);
 get_chunk(Mem, Addr, Bytes) when is_binary(Mem) ->
