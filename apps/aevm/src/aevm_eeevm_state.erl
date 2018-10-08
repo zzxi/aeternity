@@ -185,7 +185,9 @@ get_store(#{chain_api := ChainAPI, chain_state := ChainState}) ->
 
 import_state_from_store(Store, State) ->
     case aevm_eeevm_store:get_sophia_state_type(Store) of
-        false -> State;  %% No state yet (init function)
+        false ->
+            %% No state yet (init function). Write 0 to the state pointer.
+            aevm_eeevm_memory:store(0, 0, State);
         _StateType ->
             %% The state value in the store already has the correct offset (32),
             %% so no need to translate it.
