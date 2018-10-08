@@ -178,4 +178,5 @@
 -define(PRIM_CALL_MAP_PUT,    302).
 -define(PRIM_CALL_MAP_DELETE, 303).
 -define(PRIM_CALL_MAP_SIZE,   304).
+-define(PRIM_CALL_MAP_TOLIST, 305).
 

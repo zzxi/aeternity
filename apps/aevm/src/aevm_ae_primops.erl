@@ -279,6 +279,8 @@ map_call(?PRIM_CALL_MAP_DELETE, _Value, Data, State) ->
     map_call_delete(Data, State);
 map_call(?PRIM_CALL_MAP_SIZE, _Value, Data, State) ->
     map_call_size(Data, State);
+map_call(?PRIM_CALL_MAP_TOLIST, _Value, Data, State) ->
+    map_call_tolist(Data, State);
 map_call(_, _, _, _) ->
     {error, out_of_gas}.
 
@@ -322,6 +324,45 @@ map_call_delete(Data, State) ->
     {ok, KeyBin} = aevm_eeevm_state:heap_to_binary(KeyType, KeyPtr, State),
     {NewMapId, State1} = aevm_eeevm_maps:delete(MapId, KeyBin, State),
     {ok, {ok, <<NewMapId:256>>}, 0, State1}.
+
+map_call_tolist(Data, State) ->
+    [MapId] = get_args([word], Data),
+    {KeyType, ValType} = aevm_eeevm_maps:map_type(MapId, State),
+    {ok, Map} = aevm_eeevm_maps:get_flat_map(MapId, State),
+    List = maps:to_list(Map),
+    HeapBin = build_heap_list(aevm_eeevm_state:maps(State), KeyType, ValType, List),
+    {ok, {ok, HeapBin}, 0, State}.
+
+build_heap_list(_, _, _, []) -> <<(-1):256>>;
+build_heap_list(Maps, KeyType, ValType, KVs) ->
+    build_heap_list(Maps, KeyType, ValType, KVs, 32, []).
+
+build_heap_list(_, _, _, [], _, Acc) ->
+    <<32:256, (list_to_binary(lists:reverse(Acc)))/binary>>;
+build_heap_list(Maps, KeyType, ValType, [{K, V} | KVs], Offs, Acc) ->
+    %% Addr:  Offs      Offs + 32  HeadPtr  HeadPtr + 32  KeyPtr    ValPtr  TailPtr
+    %% Data:  [HeadPtr] [TailPtr]  [KeyPtr]   [ValPtr]    KeyBin    ValBin  NextConsCell
+    HeadPtr      = Offs + 64,
+    KeyPtr       = HeadPtr + 64,
+    NextId       = 0,   %% There are no maps in map keys
+    {ok, KeyVal} = aeso_data:binary_to_heap(KeyType, K, NextId, KeyPtr),
+    KeyBin       = aeso_data:heap_value_heap(KeyVal),
+    KeyPtr1      = aeso_data:heap_value_pointer(KeyVal),
+    ValPtr       = KeyPtr + byte_size(KeyBin),
+    <<VP:256, VB/binary>> = V,
+    {ok, ValVal} = aeso_data:heap_to_heap(ValType, aeso_data:heap_value(Maps, VP, VB, 32), ValPtr),
+    ValPtr1      = aeso_data:heap_value_pointer(ValVal),
+    ValBin       = aeso_data:heap_value_heap(ValVal),
+    TailPtr      =
+        case KVs of
+            [] -> -1;
+            _  -> ValPtr + byte_size(ValBin)
+        end,
+    ConsCell = <<HeadPtr:256, TailPtr:256>>,
+    PairCell = <<KeyPtr1:256, ValPtr1:256>>,
+    build_heap_list(Maps, KeyType, ValType, KVs, TailPtr,
+                    [[ConsCell, PairCell, KeyBin, ValBin] | Acc]).
+
 
 %% ------------------------------------------------------------------
 %% Internal functions

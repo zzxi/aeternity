@@ -223,11 +223,10 @@ heap_to_binary(Type, Ptr, State) ->
     aeso_data:heap_to_binary(Type, Store, Value).
 
 heap_to_heap(Type, Ptr, State) ->
-    Store = get_store(State),
     Heap  = mem(State),
     Maps  = maps(State),
     Value = aeso_data:heap_value(Maps, Ptr, Heap),
-    {ok, NewValue} = aeso_data:heap_to_heap(Type, Store, Value, 32),
+    {ok, NewValue} = aeso_data:heap_to_heap(Type, Value, 32),
     NewPtr = aeso_data:heap_value_pointer(NewValue),
     NewBin = aeso_data:heap_value_heap(NewValue),
     {ok, <<NewPtr:256, NewBin/binary>>}.
@@ -251,7 +250,7 @@ return_contract_call_result(To, Input, Addr, Size, ReturnData, State) ->
                             %% Local primops (like map primops) return heap values
                             <<Ptr:256, Bin/binary>> = ReturnData,
                             HeapVal = aeso_data:heap_value(maps(State), Ptr, Bin, 32),
-                            {ok, Out} = aeso_data:heap_to_heap(Type, get_store(State), HeapVal, HeapSize),
+                            {ok, Out} = aeso_data:heap_to_heap(Type, HeapVal, HeapSize),
                             Out;
                         false ->
                             {ok, Out} = aeso_data:binary_to_heap(Type, ReturnData, aevm_eeevm_maps:next_id(maps(State)), HeapSize),
@@ -290,7 +289,7 @@ save_store(#{ chain_state := ChainState
                         {Ptr, _}     = aevm_eeevm_memory:load(Addr, State),
                         Store        = get_store(State),
                         StateValue   = aeso_data:heap_value(maps(State), Ptr, Heap),
-                        {ok, StateValue1} = aeso_data:heap_to_heap(Type, Store, StateValue, 32),
+                        {ok, StateValue1} = aeso_data:heap_to_heap(Type, StateValue, 32),
                         Store1       = aevm_eeevm_store:set_sophia_state(StateValue1, Store),
                         State#{ chain_state => ChainAPI:set_store(Store1, ChainState) }
                 end

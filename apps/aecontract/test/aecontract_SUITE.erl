@@ -1876,8 +1876,8 @@ sophia_maps(_Cfg) ->
     Pt     = {tuple, [word, word]},
     IntMap = {map, word,   Pt},
     StrMap = {map, string, Pt},
-    %% IntList = {list, {tuple, [word,   Pt]}},
-    %% StrList = {list, {tuple, [string, Pt]}},
+    IntList = {list, {tuple, [word,   Pt]}},
+    StrList = {list, {tuple, [string, Pt]}},
     Unit   = {tuple, []},
     State  = {tuple, [IntMap, StrMap]},
 
@@ -1952,9 +1952,9 @@ sophia_maps(_Cfg) ->
           end || {Fn, Type, Args, Result} <- Calls ],
 
     %% to_list (not tolist_state)
-    %% _ = [ {Xs, Xs} = {lists:keysort(1, Call(Fn, Type, Map)), maps:to_list(Map)}
-    %%         || {Fn, Type, Map} <- [{tolist_i, IntList, MapI},
-    %%                                {tolist_s, StrList, MapS}] ],
+    _ = [ {Xs, Xs} = {lists:keysort(1, Call(Fn, Type, Map)), maps:to_list(Map)}
+            || {Fn, Type, Map} <- [{tolist_i, IntList, MapI},
+                                   {tolist_s, StrList, MapS}] ],
 
     %% Reset the state
     Call(fromlist_state_i, Unit, []),
@@ -1967,9 +1967,9 @@ sophia_maps(_Cfg) ->
     {MapI, MapS} = Call(get_state, State, {}),
 
     %% tolist_state
-    %% _ = [ {Xs, Xs} = {lists:keysort(1, Call(Fn, Type, {})), maps:to_list(Map)}
-    %%         || {Fn, Type, Map} <- [{tolist_state_i, IntList, MapI},
-    %%                                {tolist_state_s, StrList, MapS}] ],
+    _ = [ {Xs, Xs} = {lists:keysort(1, Call(Fn, Type, {})), maps:to_list(Map)}
+            || {Fn, Type, Map} <- [{tolist_state_i, IntList, MapI},
+                                   {tolist_state_s, StrList, MapS}] ],
 
     %% set_state
     DeltaI1 = #{ 3 => {100, 200}, 4 => {300, 400} },

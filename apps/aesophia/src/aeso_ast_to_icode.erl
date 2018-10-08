@@ -237,7 +237,7 @@ ast_body({qid, _, ["AENS", "revoke"]}, _Icode)   -> error({underapplied_primitiv
 
 %% -- map lookup  m[k]
 ast_body({map_get, _, Map, Key}, Icode) ->
-    {_, ValType} = check_monomorphic_map(Map),
+    {_, ValType} = check_monomorphic_map(Map, Icode),
     Fun = {map_get, ast_typerep(ValType, Icode)},
     builtin_call(Fun, [ast_body(Map, Icode), ast_body(Key, Icode)]);
 
@@ -245,7 +245,7 @@ ast_body({map_get, _, Map, Key}, Icode) ->
 ast_body(?qid_app(["Map", "lookup"], [Key, Map], _, _), Icode) ->
     map_get(Key, Map, Icode);
 ast_body(?qid_app(["Map", "lookup_default"], [Key, Map, Val], _, _), Icode) ->
-    {_, ValType} = check_monomorphic_map(Map),
+    {_, ValType} = check_monomorphic_map(Map, Icode),
     Fun = {map_lookup_default, ast_typerep(ValType, Icode)},
     builtin_call(Fun, [ast_body(Map, Icode), ast_body(Key, Icode), ast_body(Val, Icode)]);
 ast_body(?qid_app(["Map", "member"], [Key, Map], _, _), Icode) ->
@@ -258,10 +258,11 @@ ast_body(?qid_app(["Map", "delete"], [Key, Map], _, _), Icode) ->
 %% -- map conversion to/from list
 ast_body(App = ?qid_app(["Map", "from_list"], [List], _, MapType), Icode) ->
     Ann = aeso_syntax:get_ann(App),
-    {KeyType, ValType} = check_monomorphic_map(Ann, MapType),
+    {KeyType, ValType} = check_monomorphic_map(Ann, MapType, Icode),
     builtin_call(map_from_list, [ast_body(List, Icode), map_empty(KeyType, ValType, Icode)]);
 
-%% ast_body(?qid_app(["Map", "to_list"],   [Map], _, _), Icode)  -> ast_body(Map, Icode);
+ast_body(?qid_app(["Map", "to_list"], [Map], _, _), Icode) ->
+    map_tolist(Map, Icode);
 
 ast_body({qid, _, ["Map", "from_list"]}, _Icode) -> error({underapplied_primitive, 'Map.from_list'});
 %% ast_body({qid, _, ["Map", "to_list"]}, _Icode)   -> error({underapplied_primitive, 'Map.to_list'});
@@ -271,7 +272,7 @@ ast_body({qid, _, ["Map", "member"]}, _Icode)    -> error({underapplied_primitiv
 
 %% -- map construction { k1 = v1, k2 = v2 }
 ast_body({typed, Ann, {map, _, KVs}, MapType}, Icode) ->
-    {KeyType, ValType} = check_monomorphic_map(Ann, MapType),
+    {KeyType, ValType} = check_monomorphic_map(Ann, MapType, Icode),
     lists:foldr(fun({K, V}, Map) ->
                     builtin_call(map_put, [Map, ast_body(K, Icode), ast_body(V, Icode)])
                 end, map_empty(KeyType, ValType, Icode), KVs);
@@ -459,12 +460,16 @@ ast_binop(Op, Ann, {typed, _, A, Type}, B, Icode)
 ast_binop(Op, _, A, B, Icode) ->
     #binop{op = Op, left = ast_body(A, Icode), right = ast_body(B, Icode)}.
 
-check_monomorphic_map({typed, Ann, _, MapType}) ->
-    check_monomorphic_map(Ann, MapType).
+check_monomorphic_map({typed, Ann, _, MapType}, Icode) ->
+    check_monomorphic_map(Ann, MapType, Icode).
 
-check_monomorphic_map(Ann, Type = ?map_t(KeyType, ValType)) ->
+check_monomorphic_map(Ann, Type = ?map_t(KeyType, ValType), Icode) ->
     case is_monomorphic(KeyType) of
-        true  -> {KeyType, ValType};
+        true  ->
+            case aeso_data:has_maps(ast_type(KeyType, Icode)) of
+                false -> {KeyType, ValType};
+                true  -> error({cant_use_map_as_map_keys, Ann, Type})
+            end;
         false -> error({cant_compile_map_with_polymorphic_keys, Ann, Type})
     end.
 
@@ -475,20 +480,25 @@ map_empty(KeyType, ValType, Icode) ->
               [typerep, typerep], word).
 
 map_get(Key, Map = {typed, Ann, _, MapType}, Icode) ->
-    {_KeyType, ValType} = check_monomorphic_map(Ann, MapType),
+    {_KeyType, ValType} = check_monomorphic_map(Ann, MapType, Icode),
     builtin_call({map_lookup, ast_type(ValType, Icode)}, [ast_body(Map, Icode), ast_body(Key, Icode)]).
 
 map_put(Key, Val, Map, Icode) ->
     builtin_call(map_put, [ast_body(Map, Icode), ast_body(Key, Icode), ast_body(Val, Icode)]).
 
 map_del(Key, Map, Icode) ->
-    %% Pass map by id (word)
     prim_call(?PRIM_CALL_MAP_DELETE, #integer{value = 0},
               [ast_body(Map, Icode), ast_body(Key, Icode)],
               [word, word], word).
 
+map_tolist(Map, Icode) ->
+    {KeyType, ValType} = check_monomorphic_map(Map, Icode),
+    prim_call(?PRIM_CALL_MAP_TOLIST, #integer{value = 0},
+              [ast_body(Map, Icode)],
+              [word], {list, {tuple, [ast_type(KeyType, Icode), ast_type(ValType, Icode)]}}).
+
 map_upd(Key, ValFun, Map = {typed, Ann, _, MapType}, Icode) ->
-    {_, ValType} = check_monomorphic_map(Ann, MapType),
+    {_, ValType} = check_monomorphic_map(Ann, MapType, Icode),
     FunName = {map_upd, ast_type(ValType, Icode)},
     Args    = [ast_body(Map, Icode), ast_body(Key, Icode), ast_body(ValFun, Icode)],
     builtin_call(FunName, Args).

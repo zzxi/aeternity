@@ -5,7 +5,7 @@
         , binary_to_words/1
         , from_heap/3
         , binary_to_heap/4
-        , heap_to_heap/4
+        , heap_to_heap/3
         , heap_to_binary/3
         , binary_to_binary/2
         , heap_value/3
@@ -130,11 +130,11 @@ binary_to_binary(Type, <<Ptr:32/unit:8, Heap/binary>>) ->
 %% -- Heap to heap -----------------------------------------------------------
 
 %% Used for the state
--spec heap_to_heap(Type :: ?Type(), Store :: store(), Heap :: heap_value(), Offs :: offset()) ->
+-spec heap_to_heap(Type :: ?Type(), Heap :: heap_value(), Offs :: offset()) ->
         {ok, heap_value()} | {error, term()}.
-heap_to_heap(Type, Store, {Ptr, Heap}, Offs) ->
+heap_to_heap(Type, {Ptr, Heap}, Offs) ->
     try
-        {Addr, {Maps, _, Mem}} = convert(heap, heap, Store, #{}, Type, Ptr, Heap, Offs),
+        {Addr, {Maps, _, Mem}} = convert(heap, heap, no_store(), #{}, Type, Ptr, Heap, Offs),
         {ok, heap_value(Maps, Addr, list_to_binary(Mem), Offs)}
     catch _:Err ->
         io:format("** Error: heap_to_heap failed with ~p\n  ~p\n", [Err, erlang:get_stacktrace()]),

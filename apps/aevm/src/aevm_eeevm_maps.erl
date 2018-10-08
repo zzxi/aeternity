@@ -15,6 +15,7 @@
         , empty/3
         , size/2
         , get/3
+        , get_flat_map/2
         , put/4
         , delete/3
         , flatten_map/3
@@ -107,7 +108,7 @@ update(Id, Key, Val, State) ->
                     _ -> Data#{Key => Val}
                 end,
             add_map(Map#pmap{ size = Map#pmap.size + DeltaSize, data = Data1 }, State);
-        stored -> %% not yet implemented
+        stored ->
             add_map(Map#pmap{ size = Map#pmap.size + DeltaSize, parent = Id, data = #{Key => Val} }, State)
     end.
 
@@ -152,6 +153,16 @@ flatten_map(Store, MapId, Map) ->
         end,
     Map#pmap{ parent = none, data = Data }.
 
+-spec get_flat_map(map_id(), state()) ->
+    {ok, #{aeso_data:binary_value() => aeso_data:binary_value()}} | {error, not_found}.
+get_flat_map(MapId, State) ->
+    case get_map(MapId, State) of
+        {ok, Map} ->
+            #{chain_api := ChainAPI, chain_state := ChainState} = State,
+            Store = ChainAPI:get_store(ChainState),
+            {ok, (flatten_map(Store, MapId, Map))#pmap.data};
+        {error, _} = Err -> Err
+    end.
 
 %% -- Internal functions -----------------------------------------------------
 

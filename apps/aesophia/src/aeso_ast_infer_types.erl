@@ -120,7 +120,7 @@ global_env() ->
      {["AENS", "revoke"],   Fun([Address, Hash, Signature], Unit)},
      %% Maps
      {["Map", "from_list"],      Fun1(List(Pair(K, V)), Map(K, V))},
-     %% {["Map", "to_list"],        Fun1(Map(K, V), List(Pair(K, V)))},  %% Not yet
+     {["Map", "to_list"],        Fun1(Map(K, V), List(Pair(K, V)))},
      {["Map", "lookup"],         Fun([K, Map(K, V)], Option(V))},
      {["Map", "lookup_default"], Fun([K, Map(K, V), V], V)},
      {["Map", "delete"],         Fun([K, Map(K, V)], Map(K, V))},
