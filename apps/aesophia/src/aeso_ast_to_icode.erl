@@ -250,8 +250,8 @@ ast_body(?qid_app(["Map", "lookup_default"], [Key, Map, Val], _, _), Icode) ->
     builtin_call(Fun, [ast_body(Map, Icode), ast_body(Key, Icode), ast_body(Val, Icode)]);
 ast_body(?qid_app(["Map", "member"], [Key, Map], _, _), Icode) ->
     builtin_call(map_member, [ast_body(Map, Icode), ast_body(Key, Icode)]);
-ast_body(?qid_app(["Map", "size"], [_Map], _, _), _Icode) ->
-    error({not_implemented, 'Map.size'});
+ast_body(?qid_app(["Map", "size"], [Map], _, _), Icode) ->
+    builtin_call(map_size, [ast_body(Map, Icode)]);
 ast_body(?qid_app(["Map", "delete"], [Key, Map], _, _), Icode) ->
     map_del(Key, Map, Icode);
 
@@ -648,9 +648,16 @@ builtin_function(Builtin = map_delete) ->
     {{builtin, Builtin}, [private],
         [{"m", word}, {"k", word}],
         prim_call(?PRIM_CALL_MAP_DELETE, #integer{value = 0},
-                  [#var_ref{name = "m"}, #var_ref{name = "k"}],
+                  [v(m), v(k)],
                   [word, word], word),
      word};
+
+builtin_function(Builtin = map_size) ->
+    Name = {builtin, Builtin},
+    {Name, [private], [{"m", word}],
+        prim_call(?PRIM_CALL_MAP_SIZE, #integer{value = 0},
+                  [v(m)], [word], word),
+        word};
 
 %% Map builtins
 builtin_function(Builtin = {map_get, Type}) ->
@@ -711,14 +718,6 @@ builtin_function(Builtin = map_from_list) ->
           builtin_call(map_from_list,
             [v(ys), builtin_call(map_put, [v(acc), v(k), v(v)])])}]},
      word};
-
-%% TODO
-%% builtin_function(map_size) ->
-%%     Name = {builtin, map_size},
-%%     {Name, [private],
-%%         [{"map", word}],
-%%         'TODO',
-%%         word};
 
 builtin_function(string_length) ->
     %% function length(str) =

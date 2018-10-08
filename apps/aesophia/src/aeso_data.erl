@@ -236,7 +236,7 @@ get_map(heap, _KeyT, _ValT, MapId, Heap) ->
 get_map(binary, KeyT, ValT, Ptr, Heap) ->
     Size = get_word(Heap, Ptr),
     Map  = map_binary_to_heap(Size, Heap, Ptr + 32),
-    #pmap{ key_t = KeyT, val_t = ValT, parent = none, data = Map }.
+    #pmap{ key_t = KeyT, val_t = ValT, size = maps:size(Map), parent = none, data = Map }.
 
 convert_map(Input, Output, Store, KeyT, ValT, Ptr, Heap) ->
     Map = #pmap{ data = Data } = get_map(Input, KeyT, ValT, Ptr, Heap),

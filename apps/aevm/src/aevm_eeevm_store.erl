@@ -116,6 +116,9 @@ store_maps(Maps0, Store) ->
     %% io:format("NewStore:\n~s\n", [show_store(NewStore)]),
     NewStore.
 
+-define(MapInfo(RealId, RefCount, Size, Bin),
+        <<(RealId):256, (RefCount):256, (Size):256, (Bin)/binary>>).
+
 perform_update({new_inplace, NewId, OldId}, Store) ->
     OldKey   = <<OldId:256>>,
     NewKey   = <<NewId:256>>,
@@ -130,8 +133,10 @@ perform_update({delete, Id, Key}, Store) ->
     maps:remove(<<RealId:256, Key/binary>>, Store);
 perform_update({new, Id, Map0}, Store) ->
     Map = aevm_eeevm_maps:flatten_map(Store, Id, Map0),
-    RefCount = 0,   %% TODO
-    Info = #{ <<Id:256>> => <<Id:256, RefCount:256, (aeso_data:to_binary({Map#pmap.key_t, Map#pmap.val_t}))/binary>> },
+    RefCount = 0,   %% Set later
+    Size     = Map0#pmap.size,
+    Bin      = aeso_data:to_binary({Map#pmap.key_t, Map#pmap.val_t}),
+    Info = #{ <<Id:256>> => ?MapInfo(Id, RefCount, Size, Bin) },
     Data = maps:from_list(
             [ {<<Id:256, Key/binary>>, Val} || {Key, Val} <- maps:to_list(Map#pmap.data) ]),
     maps:merge(Store, maps:merge(Info, Data));
@@ -147,22 +152,26 @@ all_map_ids(Store) ->
     [ Id || <<Id:256>> <= maps:get(?SOPHIA_STATE_MAPS_KEY, Store, <<>>) ].
 
 map_types(Id, Store) ->
-    <<_:256, _:256, Bin/binary>> = maps:get(<<Id:256>>, Store),
+    ?MapInfo(_, _, _, Bin) = maps:get(<<Id:256>>, Store),
     {ok, Types} = aeso_data:from_binary({tuple, [typerep, typerep]}, Bin),
     Types.
 
+map_size(Id, Store) ->
+    ?MapInfo(_, _, Size, _) = maps:get(<<Id:256>>, Store),
+    Size.
+
 real_id(Id, Store) ->
-    <<RealId:256, _/binary>> = maps:get(<<Id:256>>, Store),
+    ?MapInfo(RealId, _, _, _) = maps:get(<<Id:256>>, Store),
     RealId.
 
 ref_count(Id, Store) ->
-    <<_:256, RefCount:256, _/binary>> = maps:get(<<Id:256>>, Store),
+    ?MapInfo(_, RefCount, _, _) = maps:get(<<Id:256>>, Store),
     RefCount.
 
 set_ref_count(Id, RefCount, Store) ->
     maps:update_with(<<Id:256>>,
-        fun(<<RealId:256, _:256, Info/binary>>) ->
-            <<RealId:256, RefCount:256, Info/binary>> end, Store).
+        fun(?MapInfo(RealId, _, Size, Bin)) -> ?MapInfo(RealId, RefCount, Size, Bin) end,
+        Store).
 
 set_ref_counts(RefCounts, Store) ->
     lists:foldl(fun({Id, RefCount}, St) ->
@@ -286,7 +295,8 @@ get_sophia_state(Store) ->
     Maps = maps:from_list(
         [ begin
               {KeyT, ValT} = map_types(MapId, Store),
-              {MapId, #pmap{ key_t = KeyT, val_t = ValT, parent = none, data = stored }}
+              Size         = map_size(MapId, Store),
+              {MapId, #pmap{ key_t = KeyT, val_t = ValT, size = Size, parent = none, data = stored }}
           end || MapId <- MapKeys ]),
     aeso_data:heap_value(#maps{next_id = lists:max([-1 | MapKeys]) + 1, maps = Maps}, Ptr, Heap, 32).
 

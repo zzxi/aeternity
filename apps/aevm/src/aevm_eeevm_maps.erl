@@ -13,6 +13,7 @@
         , next_id/1
         , merge/2
         , empty/3
+        , size/2
         , get/3
         , put/4
         , delete/3
@@ -62,8 +63,14 @@ empty(KeyType, ValType, State) ->
     Map = #pmap{ key_t  = KeyType,
                  val_t  = ValType,
                  parent = none,
+                 size   = 0,
                  data   = #{}},
     add_map(Map, State).
+
+-spec size(map_id(), state()) -> non_neg_integer().
+size(Id, State) ->
+    {ok, Map} = get_map(Id, State),
+    Map#pmap.size.
 
 -spec get(map_id(), value(), state()) -> false | value().
 get(Id, Key, State) ->
@@ -94,6 +101,7 @@ delete(Id, Key, State) ->
 -spec update(map_id(), value(), value() | tombstone, state()) -> {map_id(), state()}.
 update(Id, Key, Val, State) ->
     {ok, Map} = get_map(Id, State),
+    DeltaSize = delta_size(Id, Key, Val, State),
     case Map#pmap.data of
         Data when is_map(Data) -> %% squash local updates
             Data1 =
@@ -102,9 +110,24 @@ update(Id, Key, Val, State) ->
                         maps:remove(Key, Data);
                     _ -> Data#{Key => Val}
                 end,
-            add_map(Map#pmap{ data = Data1 }, State);
+            add_map(Map#pmap{ size = Map#pmap.size + DeltaSize, data = Data1 }, State);
         stored -> %% not yet implemented
-            add_map(Map#pmap{ parent = Id, data = #{Key => Val} }, State)
+            add_map(Map#pmap{ size = Map#pmap.size + DeltaSize, parent = Id, data = #{Key => Val} }, State)
+    end.
+
+delta_size(Id, Key, Val, State) ->
+    New = if Val == tombstone -> delete;
+             true             -> insert
+          end,
+    Old = case get(Id, Key, State) of
+             false -> absent;
+             _     -> present
+          end,
+    case {New, Old} of
+        {delete, absent}  -> 0;
+        {delete, present} -> -1;
+        {insert, absent}  -> 1;
+        {insert, present} -> 0
     end.
 
 %% Follow parent pointers and collapse tombstones.

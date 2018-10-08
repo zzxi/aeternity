@@ -1943,10 +1943,10 @@ sophia_maps(_Cfg) ->
                                     {member_s, member_state_s, MapS, <<"four">>}],
             K <- maps:keys(Map) ++ [Err] ] ++
         %% size
-        %% [ [{Fn,  word, Map, maps:size(Map)},
-        %%    {FnS, word, {},  maps:size(Map)}]
-        %%  || {Fn, FnS, Map} <- [{size_i, size_state_i, MapI},
-        %%                        {size_s, size_state_s, MapS}] ] ++
+        [ [{Fn,  word, Map, maps:size(Map)},
+           {FnS, word, {},  maps:size(Map)}]
+         || {Fn, FnS, Map} <- [{size_i, size_state_i, MapI},
+                               {size_s, size_state_s, MapS}] ] ++
         %% set (not set_state)
         [ [{Fn, Type, {K, V, Map}, Map#{K => V}}]
          || {Fn, Type, Map, New, V} <- [{set_i, IntMap, MapI, 4, {7, 8}},

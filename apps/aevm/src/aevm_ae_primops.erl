@@ -277,6 +277,8 @@ map_call(?PRIM_CALL_MAP_PUT, _Value, Data, State) ->
     map_call_put(Data, State);
 map_call(?PRIM_CALL_MAP_DELETE, _Value, Data, State) ->
     map_call_delete(Data, State);
+map_call(?PRIM_CALL_MAP_SIZE, _Value, Data, State) ->
+    map_call_size(Data, State);
 map_call(_, _, _, _) ->
     {error, out_of_gas}.
 
@@ -284,6 +286,11 @@ map_call_empty(Data, State) ->
     [KeyType, ValType] = get_args([typerep, typerep], Data),
     {MapId, State1} = aevm_eeevm_maps:empty(KeyType, ValType, State),
     {ok, {ok, <<MapId:32/unit:8>>}, 0, State1}.
+
+map_call_size(Data, State) ->
+    [MapId] = get_args([word], Data),
+    Size = aevm_eeevm_maps:size(MapId, State),
+    {ok, {ok, <<Size:256>>}, 0, State}.
 
 map_call_get(Data, State) ->
     [MapId]   = get_args([word], Data),
