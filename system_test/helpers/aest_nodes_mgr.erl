@@ -114,11 +114,11 @@ handle_call({setup_nodes, NodeSpecs}, _From, State) ->
 handle_call({get_node_pubkey, NodeName}, _From, State) ->
     {reply, mgr_get_node_pubkey(NodeName, State), State};
 handle_call({get_service_address, NodeName, Service}, _From, #{nodes := Nodes} = State) ->
-    #{NodeName := {Mod, NodeState}} = Nodes,
+    {Mod, NodeState} = maps:get(NodeName, Nodes),
     ServiceAddress = Mod:get_service_address(Service, NodeState),
     {reply, ServiceAddress, State};
 handle_call({get_internal_address, NodeName, Service}, _From, #{nodes := Nodes} = State) ->
-    #{NodeName := {Mod, NodeState}} = Nodes,
+    {Mod, NodeState} = maps:get(NodeName, Nodes),
     ServiceAddress = Mod:get_internal_address(Service, NodeState),
     {reply, ServiceAddress, State};
 handle_call({get_config, NodeName, Path}, _From, #{nodes := Nodes} = State) when is_list(Path) ->
@@ -214,7 +214,7 @@ mgr_cleanup(State) ->
 
 
 mgr_get_node_pubkey(NodeName, #{nodes := Nodes}) ->
-    #{NodeName := {Mod, NodeState}} = Nodes,
+    {Mod, NodeState} = maps:get(NodeName, Nodes),
     Mod:get_node_pubkey(NodeState).
 
 mgr_extract_archive(NodeName, Path, Archive, #{nodes := Nodes} = State) ->
