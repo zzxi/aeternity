@@ -777,11 +777,11 @@ error_data_msg(Code) ->
 error_data_msgs() ->
     #{
        100 => <<"X doesn't exist">>
-     , 101 => <<"Requires coin">>      %% (Requires ether)
+     , 101 => <<"Requires coin">>
      , 102 => <<"Gas too low">>
      , 103 => <<"Gas limit exceeded">>
      , 104 => <<"Rejected">>
-     , 105 => <<"Value too low">>      %% (Ether too low)
+     , 105 => <<"Value too low">>
      , 106 => <<"Timeout">>
      , 107 => <<"Conflict">>
      %% Aeternity error codes
