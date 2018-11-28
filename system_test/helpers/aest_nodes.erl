@@ -39,6 +39,7 @@
 -export([get/5]).
 -export([get_block/2]).
 -export([get_top/1]).
+-export([get_pending_key_block/1]).
 -export([get_mempool/1]).
 -export([get_account/2]).
 -export([get_channel/2]).
@@ -58,6 +59,7 @@
          post_name_revoke_tx/4]).
 -export([post_contract_create_tx/3,
          post_contract_call_tx/3]).
+-export([post_key_block/2]).
 -export([wait_for_value/4]).
 -export([wait_for_time/3]).
 -export([wait_for_time/4]).
@@ -375,6 +377,9 @@ get_top(NodeName) ->
         #{micro_block := MicroBlock} -> MicroBlock
     end.
 
+get_pending_key_block(NodeName) ->
+    verify(200, request(NodeName, 'GetPendingKeyBlock', #{})).
+
 get_mempool(NodeName) ->
     Txs = verify(200, request(NodeName, 'GetPendingTransactions', #{})),
     case {maps:get(<<"transactions">>, Txs, undefined),
@@ -554,6 +559,9 @@ post_transaction(Node, TxMod, PrivKey, ExtraTxArgs, TxArgs) ->
     SignedEnc = aetx_sign:serialize_to_binary(Signed),
     Transaction = aehttp_api_encoder:encode(transaction, SignedEnc),
     verify(200, request(Node, 'PostTransaction', #{tx => Transaction})).
+
+post_key_block(Node, Block) ->
+    verify(200, request(Node, 'PostKeyBlock', Block)).
 
 %% Use values that are not yet api encoded in test cases
 wait_for_value({balance, PubKey, MinBalance}, NodeNames, Timeout, Ctx) ->
