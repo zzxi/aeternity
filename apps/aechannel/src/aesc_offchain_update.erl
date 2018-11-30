@@ -36,8 +36,8 @@
          extract_call/1,
          extract_caller/1,
          extract_contract_pubkey/1,
-         extract_amounts/1,
-         extract_vm_version/1]).
+         extract_vm_version/1,
+         extract_amounts/1]).
 
 -spec op_transfer(aec_id:id(), aec_id:id(), non_neg_integer()) -> update().
 op_transfer(From, To, Amount) ->
@@ -331,6 +331,17 @@ extract_call(Update) ->
         _ -> not_call
     end.
 
+-spec extract_vm_version(aesc_offchain_update:update()) -> aect_contracts:vm_version()
+                                                          | not_call.
+extract_vm_version(Update) ->
+    case Update of
+        {?OP_CALL_CONTRACT, _, _, VmVersion, _, _, _, _, _} ->
+            VmVersion;
+        {?OP_CREATE_CONTRACT, _, VmVersion, _, _, _} ->
+            VmVersion;
+        _ -> not_call
+    end.
+
 -spec extract_contract_pubkey(update()) -> aect_contracts:pubkey().
 extract_contract_pubkey({?OP_CALL_CONTRACT, _, Contract, _, _, _, _, _, _}) ->
     contract_pubkey(Contract).
@@ -344,10 +355,6 @@ extract_amounts(Update) ->
             {Amount, GasPrice, Gas};
         _ -> not_call
     end.
-
--spec extract_vm_version(update()) -> aect_contracts:vm_version().
-extract_vm_version({?OP_CALL_CONTRACT, _, _, VmVersion, _, _, _, _, _}) ->
-    VmVersion.
 
 update_error(Err) ->
     error({off_chain_update_error, Err}).

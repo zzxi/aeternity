@@ -255,12 +255,12 @@ set_signed_tx(SignedTx, #state{}=State, OnChainTrees,
                         IsNewContract = aesc_offchain_update:is_contract_create(Update),
                         case IsNewContract orelse IsCall of
                             false -> {TrAccum1, CallsAccum};
-                            true ->
-                                CallsAccum1 =  move_call(Update,
-                                                         Mod:round(TxI),
-                                                         CallsAccum,
-                                                         TrAccum1),
-                                {TrAccum1, CallsAccum1}
+                            true -> {TrAccum1, CallsAccum}
+                                %CallsAccum1 =  move_call(Update,
+                                %                         Mod:round(TxI),
+                                %                         CallsAccum,
+                                %                         TrAccum1),
+                                %{TrAccum1, CallsAccum1}
                         end
                     end,
                     {aect_call_state_tree:prune_without_backend(State#state.trees),

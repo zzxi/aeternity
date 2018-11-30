@@ -59,7 +59,7 @@ run_new(ContractPubKey, Call, CallData, Trees0, OnChainTrees,
             ContractsTree1 = aect_state_tree:enter_contract(Contract1, ContractsTree0),
             aec_trees:set_contracts(Trees1, ContractsTree1);
         E ->
-            lager:debug("Init call error ~w ~w~n",[E, CallRes]),
+            lager:error("Init call error ~w ~w~n",[E, CallRes]),
             Trees0
     end.
 
