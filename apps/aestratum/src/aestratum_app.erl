@@ -14,7 +14,7 @@ start(_Type, _Args) ->
     %% TODO: ip - interface to listen on (all by default)
     TransportOpts = [{port, 9999}],
     Protocol = aestratum_handler,
-    ProtocolOpts = [],
+    ProtocolOpts = [{module, aestratum_server_session}],
     %% The supervisor of the listener is ranch_sup.
     {ok, _} = ranch:start_listener(
                 ?LISTENER,

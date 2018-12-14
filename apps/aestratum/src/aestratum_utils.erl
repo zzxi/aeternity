@@ -4,7 +4,9 @@
 
 -export([is_hex/1,
          is_valid_string/1,
-         lowercase/1
+         lowercase/1,
+         next_id/1,
+         to_id/1
         ]).
 
 is_hex(Bin) when is_binary(Bin) ->
@@ -26,4 +28,12 @@ lowercase(Bin) when is_binary(Bin) ->
     string:lowercase(Bin);
 lowercase(Other) ->
     Other.
+
+next_id(Id) when is_integer(Id) ->
+    (Id + 1) band ?ID_MAX.
+
+to_id(Id) when ?IS_ID(Id) ->
+    Id;
+to_id(_Other) ->
+    null.
 
