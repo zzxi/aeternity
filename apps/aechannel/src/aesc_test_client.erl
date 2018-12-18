@@ -1,26 +1,30 @@
 -module(aesc_test_client).
 
 -export([start_link/1]).
--export([local_test/0]).
+-export([local_test/0,
+         local_test/1]).
+
 -export([key_pair/2,
-         initiator_start/1,
-         initiator_start/4,
-         responder_start/1,
-         responder_start/4
+         initiator_start/2,
+         initiator_start/5,
+         responder_start/2,
+         responder_start/5
         ]).
 
 -record(kpair, {pub_key  :: aec_keys:pubkey(),
                 priv_key :: aec_keys:privkey()}).
 
--record(state, {role :: initiator | responder,
-                keys :: #kpair{},
-                fsm  :: pid(),
-                contract_id :: aect_contracts:pubkey(),
+-record(state, {role              :: initiator | responder,
+                keys              :: #kpair{},
+                fsm               :: pid(),
+                fsm_mref          :: reference(),
+                contract_id       :: aect_contracts:pubkey(),
                 status = unopened :: unopened
                                    | opened
                                    | contract_created,
                 test_start_time = not_set :: not_set | non_neg_integer(),
-                calls_left = 100000 :: non_neg_integer()
+                calls_left = 0    :: non_neg_integer(),
+                calls_total = 0   :: non_neg_integer()
                }).
 
 
@@ -51,45 +55,55 @@
 
 
 key_pair(PrivKey, PubKey) ->
+    %%  validate pair
+    SampleMsg = <<"random message">>,
+    Signature = enacl:sign_detached(SampleMsg, PrivKey),
+    true = {ok, SampleMsg} == enacl:sign_verify_detached(Signature, SampleMsg,
+                                                         PubKey),
     #kpair{pub_key  = PubKey,
            priv_key = PrivKey}.
 
 local_test() ->
+    local_test(1000).
+
+local_test(CallsCnt) ->
     Init = key_pair(?IPRIV_KEY, ?IPUB_KEY),
     Resp = key_pair(?RPRIV_KEY, ?RPUB_KEY),
     Initiator = Init#kpair.pub_key,
     Responder = Resp#kpair.pub_key,
     Address = {"localhost", 4444},
-    responder_start(Address, Initiator, Responder, Resp),
-    initiator_start(Address, Initiator, Responder, Init).
+    responder_start(Address, Initiator, Responder, Resp, CallsCnt),
+    initiator_start(Address, Initiator, Responder, Init, CallsCnt).
     
-initiator_start(Address) ->
+initiator_start(Address, CallsCnt) ->
     Init = key_pair(?IPRIV_KEY, ?IPUB_KEY),
-    initiator_start(Address, ?IPUB_KEY, ?RPUB_KEY, Init).
+    initiator_start(Address, ?IPUB_KEY, ?RPUB_KEY, Init, CallsCnt).
 
 initiator_start({ResponderHost, ResponderPort},
                  InitiatorId, ResponderId,
-                Keys) ->
-    start_link(#{role      => initiator,
-                 keys      => Keys,
-                 initiator => InitiatorId,
-                 responder => ResponderId,
-                 host      => ResponderHost,
-                 port      => ResponderPort}).
+                Keys, CallsCnt) ->
+    start_link(#{role         => initiator,
+                 keys         => Keys,
+                 initiator    => InitiatorId,
+                 responder    => ResponderId,
+                 host         => ResponderHost,
+                 port         => ResponderPort,
+                 calls_total  => CallsCnt}).
 
-responder_start(Address) ->
+responder_start(Address, CallsCnt) ->
     Resp = key_pair(?RPRIV_KEY, ?RPUB_KEY),
-    responder_start(Address, ?IPUB_KEY, ?RPUB_KEY, Resp).
+    responder_start(Address, ?IPUB_KEY, ?RPUB_KEY, Resp, CallsCnt).
 
 responder_start({ResponderHost, ResponderPort},
                  InitiatorId, ResponderId,
-                Keys) ->
-    start_link(#{role      => responder,
-                 keys      => Keys,
-                 initiator => InitiatorId,
-                 responder => ResponderId,
-                 host      => ResponderHost,
-                 port      => ResponderPort}).
+                Keys, CallsCnt) ->
+    start_link(#{role         => responder,
+                 keys         => Keys,
+                 initiator    => InitiatorId,
+                 responder    => ResponderId,
+                 host         => ResponderHost,
+                 port         => ResponderPort,
+                 calls_total  => CallsCnt}).
 
 
 %%%===================================================================
@@ -99,12 +113,13 @@ responder_start({ResponderHost, ResponderPort},
 start_link(#{} = Arg) ->
     gen_server:start_link(?MODULE, Arg, []).
 
-init(#{role      := Role,
-       keys      := Keys,
-       initiator := InitiatorId,
-       responder := ResponderId,
-       host      := ResponderHost,
-       port      := ResponderPort
+init(#{role         := Role,
+       keys         := Keys,
+       initiator    := InitiatorId,
+       responder    := ResponderId,
+       host         := ResponderHost,
+       port         := ResponderPort,
+       calls_total  := CallsTotal
       }) ->
     {ok, Fsm} =
         case Role of
@@ -120,10 +135,14 @@ init(#{role      := Role,
                                               InitiatorId,
                                               ResponderId))
         end,
+    MRef = erlang:monitor(process, Fsm),
     log_start_msg(InitiatorId, ResponderId, Role),
-    {ok, #state{role = Role,
-                keys = Keys,
-                fsm  = Fsm}}.
+    {ok, #state{role       = Role,
+                keys       = Keys,
+                fsm        = Fsm,
+                fsm_mref   = MRef,
+                calls_total= CallsTotal,
+                calls_left = CallsTotal}}.
 
 handle_call(Call, _From, #state{role = Role} = State) ->
     lager:info("Unhandled ~p call ~p", [Role, Call]),
@@ -142,16 +161,28 @@ handle_info(create_contract, State) ->
 handle_info(call_contract, #state{calls_left = Left,
                                   fsm        = Fsm,
                                   test_start_time = Tmst,
+                                  calls_total= CallsTotal,
                                   role       = Role} = State) when Left < 1 ->
     aesc_fsm:shutdown(Fsm),
     TimeL = aeu_time:now_in_msecs() - Tmst,
-    log_("is done,", "closing with a mutual agreement", Role),
-    log_("took", integer_to_list(TimeL) ++ " ms", Role),
+    log_(Role, "is done, closing with a mutual agreement"),
+    Round =
+        fun(Float, Order) ->
+            P = round(math:pow(10, Order)),
+            round(Float * P) / P
+        end,
+    AvgTimePerTx = Round(TimeL / CallsTotal, 3),
+    log_(Role, "has executed ~p calls which took ~p ms. Average ~p ms/tx. Throughput ~p tx/s.",
+         [CallsTotal, TimeL, AvgTimePerTx, Round(1000 / AvgTimePerTx, 2)]),
     {noreply, State};
 handle_info(call_contract, State) ->
     call_contract(State),
     State1 = set_time_if_needed(State),
     {noreply, State1};
+handle_info({'DOWN', FsmRef, process, Fsm, normal},
+            #state{fsm      = Fsm,
+                   fsm_mref = FsmRef} = S) ->
+    {stop, normal, S};
 handle_info(Info, #state{role = Role} = State) ->
     lager:info("Unhandled ~p info ~p", [Role, Info]),
     {noreply, State}.
@@ -161,7 +192,7 @@ handle_cast(Cast, #state{role = Role} = State) ->
     {noreply, State}.
 
 terminate(_Reason, #state{fsm = Fsm, role = Role}) ->
-    log_("is done,", "dying", Role),
+    log_(Role, "is done, stopping test"),
     ok.
 
 code_change(_OldVsn, State, _Extra) ->
@@ -200,26 +231,24 @@ process(#{type := report, tag := Tag, info := Msg0}, #state{role=Role}) ->
                 {"received a co-signed", TxType}
         end,
     pass;
-    %log_(Action, Msg, Role);
 process(#{type := sign, tag := Type, info := Tx}, #state{fsm=Fsm,
                                                          keys=Keys,
                                                          role=Role}) ->
-    %log_("asked to sign", Type, Role),
+    %log_(Role, "asked to sign a ~p tx", [Type]),
     SignedTx = sign_tx(Tx, Keys#kpair.priv_key),
     aesc_fsm:signing_response(Fsm, Type, SignedTx);
 process(Msg, #state{role=Role}) ->
-    log_("UNHANDLED PROCESS", Msg, Role).
+    log_(Role, " received an unhandled process message: ~p", [Msg]).
 
 next_state(#{type := report, tag := info, info := open},
             #state{role=Role} = State) ->
-    log_("is", "opened now!", Role),
+    log_(Role, "has an opened connection now!"),
     case Role of
         initiator ->
             timer:send_after(1000, create_contract);
         responder ->
             pass
-            %log_("is waiting for other participant to create",
-            %     "a contract", Role)
+            %log_(Role, "is waiting for other participant to create a contract")
     end,
     State#state{status = opened};
 next_state(#{type := report, tag := update, info := SignedTx},
@@ -228,14 +257,13 @@ next_state(#{type := report, tag := update, info := SignedTx},
         {channel_offchain_tx, Tx} ->
             [Update] = aesc_offchain_tx:updates(Tx),
             true = aesc_offchain_update:is_contract_create(Update),
-            log_("has a", "contract", Role),
+            log_(Role, "has a contract"),
             case Role of
                 initiator ->
                     timer:send_after(0, call_contract);
                 responder ->
                     pass
-                    %log_("is waiting for other participant to call",
-                    %    "a contract", Role)
+                    %log_(Role, "is waiting for other participant to call a contract")
             end,
             Round = aesc_offchain_tx:round(Tx),
             Owner = aesc_offchain_update:extract_caller(Update),
@@ -249,29 +277,31 @@ next_state(#{type := report, tag := update, info := SignedTx},
     end;
 next_state(#{type := report, tag := update, info := _SignedTx},
             #state{role=Role, status=contract_created,
-                   calls_left=Left} = State) ->
+                   calls_left=Left, calls_total = CallsTotal} = State) ->
 
-    %log_("is waiting for other participant to call a contract",
-    %     integer_to_list(Left), Role),
     case Role of
         initiator ->
             timer:send_after(0, call_contract);
         responder ->
             pass
-            %log_("is waiting for other participant to call",
-            %    "a contract", Role)
+            %log_(Role, "is waiting for other participant to call a contract")
     end,
     UpdatedLeft = Left - 1,
-    case UpdatedLeft rem 200 =:= 0 of
+    CallsExecuted = CallsTotal - UpdatedLeft,
+    case CallsExecuted rem 200 =:= 0 of
         true ->
-            log_("has " ++ integer_to_list(UpdatedLeft), "contract calls remaining", Role);
+            log_(Role, "has ~p/~p contract calls exectuted", [CallsExecuted,
+                                                              CallsTotal]);
         false -> pass
     end,
     State#state{calls_left = Left - 1};
 next_state(_, State) -> State.
 
-log_(Action, Msg, Role) ->
-    lager:info("~p ~s ~s", [Role, Action, Msg]).
+log_(Role, Format) ->
+    log_(Role, Format, []).
+
+log_(Role, Format, Args) ->
+    lager:info("~p " ++ Format , [Role | Args]).
 
 -spec sign_tx(aetx:tx(), list(binary()) | binary()) -> aetx_sign:signed_tx().
 sign_tx(Tx, PrivKey) when is_binary(PrivKey) ->
@@ -283,7 +313,7 @@ sign_tx(Tx, PrivKeys) when is_list(PrivKeys) ->
     aetx_sign:new(Tx, Signatures).
 
 create_transfer(#state{fsm = Fsm, role = Role}) ->
-    log_("is creating", "a transfer", Role),
+    log_(Role, "is creating a transfer"),
     ok = aesc_fsm:upd_transfer(Fsm,
                                ?IPUB_KEY,
                                ?RPUB_KEY,
@@ -292,11 +322,10 @@ create_transfer(#state{fsm = Fsm, role = Role}) ->
 
 create_contract(#state{fsm = Fsm, role = Role,
                      calls_left = Left}) ->
-    %log_("is !!!!!!!!!!!!!!!!!! creating", "a contract", Role),
     TestName = "counter",
     BinCode = compile_contract(TestName),
     CallData = make_calldata_from_code(BinCode, init, {42}), 
-    log_("is CREATING contract", integer_to_list(Left), Role),
+    log_(Role, "is proposing a contract"),
     ok = aesc_fsm:upd_create_contract(Fsm,
                                       #{vm_version => ?AEVM_01_Sophia_01,
                                         deposit    => 5,
@@ -306,7 +335,7 @@ create_contract(#state{fsm = Fsm, role = Role,
 
 call_contract(#state{fsm = Fsm, role = Role, contract_id = ContractPubkey,
                      calls_left = Left}) ->
-    %log_("is calling a contract", integer_to_list(Left), Role),
+    %log_(Role, "is executing a contract call"),
     TestName = "counter",
     BinCode = compile_contract(TestName),
     CallData = make_calldata_from_code(BinCode, tick, {}), 
