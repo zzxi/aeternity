@@ -295,6 +295,49 @@ aevm-test-deps:
 $(AEVM_EXTERNAL_TEST_DIR)/ethereum_tests:
 	@git clone https://github.com/ethereum/tests.git $(AEVM_EXTERNAL_TEST_DIR)/ethereum_tests
 
+## Info re tests using QuickCheck.
+EQC_TEST_REPO = https://github.com/lucafavatella/epoch-eqc.git
+EQC_TEST_VERSION = 9cc825c
+
+.PHONY: quickcheck-test
+quickcheck-test: eqc
+	$(MAKE) quickcheck-test-dir EQC_DIR=$</aecore_eqc
+	# TODO $(MAKE) quickcheck-test-dir EQC_DIR=$</aefate_eqc
+	$(MAKE) quickcheck-test-dir EQC_DIR=$</aeminer_eqc
+	$(MAKE) quickcheck-test-dir EQC_DIR=$</aesophia_eqc
+	$(MAKE) quickcheck-test-dir EQC_DIR=$</aeutils_eqc
+
+.PHONY: quickcheck-test-not-working
+quickcheck-test-not-working: eqc
+	$(MAKE) quickcheck-test-dir EQC_DIR=$</not-working/aecore_eqc
+	$(MAKE) quickcheck-test-dir EQC_DIR=$</not-working/aens_eqc
+	$(MAKE) quickcheck-test-dir EQC_DIR=$</not-working/aeoracles_eqc
+	$(MAKE) quickcheck-test-dir EQC_DIR=$</not-working/aesophia_eqc
+	$(MAKE) quickcheck-test-dir EQC_DIR=$</not-working/aeutils_eqc
+
+.PHONY: quickcheck-integration-test-not-working
+quickcheck-integration-test-not-working: eqc
+	$(MAKE) quickcheck-test-dir EQC_DIR=$</integration-test
+
+.PHONY: quickcheck-system-test-not-working
+quickcheck-system-test-not-working: eqc
+	$(MAKE) quickcheck-system-test-dir EQC_DIR=$</not-working/system-test
+
+.PHONY: quickcheck-test-dir
+quickcheck-test-dir:
+	ls $(EQC_DIR) > /dev/null && $(REBAR) as test,eqc eqc --dir $(EQC_DIR)
+
+.PHONY: quickcheck-system-test-dir
+quickcheck-system-test-dir:
+	ls $(EQC_DIR) > /dev/null && $(REBAR) as system_test,test,eqc eqc --dir $(EQC_DIR)
+
+.PHONY: eqc
+eqc: | eqc/.git
+	## TODO Re-fetch repo if version not found in local repo.
+	( cd $@ && git reset --quiet --soft $(EQC_TEST_VERSION) && git stash --quiet --all; )
+
+eqc/.git:
+	git clone --quiet --no-checkout $(EQC_TEST_REPO) $(@D)
 
 python-env:
 	( cd $(PYTHON_DIR) && $(MAKE) env; )
@@ -361,10 +404,17 @@ clean:
 	@-rm $(SWAGGER_ENDPOINTS_SPEC)
 	( cd $(HTTP_APP) && $(MAKE) clean; )
 	@$(MAKE) multi-distclean
+	@$(MAKE) quickcheck-clean
 	@rm -rf _build/system_test+test _build/system_test _build/test _build/prod _build/local
 	@rm -rf _build/default/plugins
 	@rm -rf $$(ls -d _build/default/lib/* | grep -v '[^_]rocksdb') ## Dependency `rocksdb` takes long to build.
 
+.PHONY: quickcheck-clean
+quickcheck-clean:
+	rm -rf .eqc-info current_counterexample.eqc
+	rm -rf _build/system_test+eqc+test _build/system_test+test+eqc _build/test+eqc
+
+## Do not delete `eqc`.
 distclean: clean
 	( cd otp_patches && $(MAKE) distclean; )
 	( cd $(HTTP_APP) && $(MAKE) distclean; )
