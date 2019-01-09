@@ -2,32 +2,10 @@
 
 -include("aestratum_jsonrpc.hrl").
 
--export([is_hex/1,
-         is_valid_string/1,
-         lowercase/1,
-         next_id/1,
-         to_id/1
+-export([next_id/1,
+         to_id/1,
+         max_extra_nonce/1
         ]).
-
-is_hex(Bin) when is_binary(Bin) ->
-    lists:all(fun(Byte) when Byte >= $0, Byte =< $9 -> true;
-                 (Byte) when Byte >= $a, Byte =< $f -> true;
-                 (Byte) when Byte >= $A, Byte =< $F -> true;
-                 (_Byte) -> false end, binary_to_list(Bin)).
-
-is_valid_string(Bin) when is_binary(Bin) ->
-    lists:all(fun(Byte) when Byte =:= $\s -> false;
-                 (Byte) when Byte =:= $\n -> false;
-                 (Byte) when Byte =:= $\t -> false;
-                 (Byte) when Byte =:= $\v -> false;
-                 (Byte) when Byte =:= $\f -> false;
-                 (Byte) when Byte =:= $\r -> false;
-                 (_Byte) -> true end, binary_to_list(Bin)).
-
-lowercase(Bin) when is_binary(Bin) ->
-    string:lowercase(Bin);
-lowercase(Other) ->
-    Other.
 
 next_id(Id) when is_integer(Id) ->
     (Id + 1) band ?ID_MAX.
@@ -37,3 +15,10 @@ to_id(Id) when ?IS_ID(Id) ->
 to_id(_Other) ->
     null.
 
+max_extra_nonce(1) -> ?NONCE_BYTES_1_MAX;
+max_extra_nonce(2) -> ?NONCE_BYTES_2_MAX;
+max_extra_nonce(3) -> ?NONCE_BYTES_3_MAX;
+max_extra_nonce(4) -> ?NONCE_BYTES_4_MAX;
+max_extra_nonce(5) -> ?NONCE_BYTES_5_MAX;
+max_extra_nonce(6) -> ?NONCE_BYTES_6_MAX;
+max_extra_nonce(7) -> ?NONCE_BYTES_7_MAX.

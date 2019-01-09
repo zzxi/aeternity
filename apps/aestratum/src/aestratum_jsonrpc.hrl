@@ -28,6 +28,7 @@
 -define(NONCE_BYTES_6_MAX, 16#0000ffffffffffff).
 -define(NONCE_BYTES_7_MAX, 16#00ffffffffffffff).
 
+%% Size when hex encoded string.
 -define(NONCE_BYTES_1_SIZE, 2).
 -define(NONCE_BYTES_2_SIZE, 4).
 -define(NONCE_BYTES_3_SIZE, 6).

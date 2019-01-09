@@ -142,9 +142,11 @@ when_connected(not_req) ->
     T = <<"when connected - not_req">>,
     L =
          %% Server receives unexpected message - response.
-        [{{conn, #{type => rsp, method => configure, id => 0, result => []}},
+        [{{conn, #{type => rsp, method => configure, id => null,
+                   reason => parse_error, data => <<"foo">>}},
           {send,
-           #{type => rsp, method => configure, id => 0, reason => unknown_error},
+           #{type => rsp, method => configure, id => null,
+             reason => unknown_error, data => <<"unexpected_msg">>},
            #{mode => server, phase => connected, timer_phase => connected}}
          }],
     prep_connected(T) ++ [{T, test, E, R} || {E, R} <- L];
@@ -338,7 +340,7 @@ conn_subscribe(Id) ->
     ExtraNonce = <<"87654321">>,
     meck:expect(?TEST_MODULE, get_host, fun() -> Host end),
     meck:expect(?TEST_MODULE, get_port, fun() -> Port end),
-    meck:expect(?TEST_MODULE, get_extra_nonce, fun() -> ExtraNonce end),
+    meck:expect(?TEST_MODULE, get_extra_nonce, fun() -> {ok, ExtraNonce} end),
 
     {{conn, #{type => req, method => subscribe, id => Id,
               user_agent => <<"aeminer/1.0.0">>, session_id => null,

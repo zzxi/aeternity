@@ -200,8 +200,6 @@
 
 -define(JSONRPC_VERSION, <<"2.0">>).
 
--define(LOWERCASE(Bin), aestratum_utils:lowercase(Bin)).
-
 %% API.
 
 -spec decode(raw_msg()) ->
@@ -337,7 +335,7 @@ msg_to_map(#{msg := #{<<"id">> := Id,
     ok = check_subscribe_req(Id, Params),
     [UserAgent, SessionId, Host, Port] = Params,
     #{type => req, method => subscribe, id => Id, user_agent => UserAgent,
-      session_id => ?LOWERCASE(SessionId), host => Host,
+      session_id => lowercase(SessionId), host => Host,
       port => Port};
 msg_to_map(#{msg := #{<<"id">> := Id,
                       <<"method">> := <<"mining.authorize">>,
@@ -345,14 +343,14 @@ msg_to_map(#{msg := #{<<"id">> := Id,
     ok = check_authorize_req(Id, Params),
     [User, Password] = Params,
     #{type => req, method => authorize, id => Id, user => User,
-      password => ?LOWERCASE(Password)};
+      password => lowercase(Password)};
 msg_to_map(#{msg := #{<<"id">> := Id,
                       <<"method">> := <<"mining.submit">>,
                       <<"params">> := Params}}) ->
     ok = check_submit_req(Id, Params),
     [User, JobId, MinerNonce, Pow] = Params,
     #{type => req, method => submit, id => Id, user => User,
-      job_id => ?LOWERCASE(JobId), miner_nonce => ?LOWERCASE(MinerNonce),
+      job_id => lowercase(JobId), miner_nonce => lowercase(MinerNonce),
       pow => Pow};
 %% Server requests
 msg_to_map(#{msg := #{<<"id">> := Id,
@@ -374,14 +372,14 @@ msg_to_map(#{msg := #{<<"id">> := Id,
     ok = check_set_target_ntf(Id, Params),
     [Target] = Params,
     #{type => ntf, method => set_target, id => null,
-      target => ?LOWERCASE(Target)};
+      target => lowercase(Target)};
 msg_to_map(#{msg := #{<<"id">> := Id,
                       <<"method">> := <<"mining.notify">>,
                       <<"params">> := Params}}) ->
     ok = check_notify_ntf(Id, Params),
     [JobId, BlockVersion, HeaderHash, EmptyQueue] = Params,
-    #{type => ntf, method => notify, id => null, job_id => ?LOWERCASE(JobId),
-      block_version => BlockVersion, header_hash => ?LOWERCASE(HeaderHash),
+    #{type => ntf, method => notify, id => null, job_id => lowercase(JobId),
+      block_version => BlockVersion, header_hash => lowercase(HeaderHash),
       empty_queue => EmptyQueue};
 %% Responses
 msg_to_map(#{msg := #{<<"id">> := Id,
@@ -686,13 +684,13 @@ check_error_data(_Data) ->
     validation_exception({param, error_data}).
 
 check_hex(Bin, Param) ->
-    case aestratum_utils:is_hex(Bin) of
+    case is_hex(Bin) of
         true -> ok;
         false -> validation_exception({param, Param})
     end.
 
 check_valid_string(Bin, Param) ->
-    case aestratum_utils:is_valid_string(Bin) of
+    case is_valid_string(Bin) of
         true -> ok;
         false -> validation_exception({param, Param})
     end.
@@ -737,4 +735,24 @@ error_code_to_reason(23)     -> low_difficulty_share;
 error_code_to_reason(24)     -> unauthorized_worker;
 error_code_to_reason(25)     -> not_subscribed;
 error_code_to_reason(_Code)  -> validation_exception({param, error_code}).
+
+is_hex(Bin) when is_binary(Bin) ->
+    lists:all(fun(Byte) when Byte >= $0, Byte =< $9 -> true;
+                 (Byte) when Byte >= $a, Byte =< $f -> true;
+                 (Byte) when Byte >= $A, Byte =< $F -> true;
+                 (_Byte) -> false end, binary_to_list(Bin)).
+
+is_valid_string(Bin) when is_binary(Bin) ->
+    lists:all(fun(Byte) when Byte =:= $\s -> false;
+                 (Byte) when Byte =:= $\n -> false;
+                 (Byte) when Byte =:= $\t -> false;
+                 (Byte) when Byte =:= $\v -> false;
+                 (Byte) when Byte =:= $\f -> false;
+                 (Byte) when Byte =:= $\r -> false;
+                 (_Byte) -> true end, binary_to_list(Bin)).
+
+lowercase(Bin) when is_binary(Bin) ->
+    string:lowercase(Bin);
+lowercase(Other) ->
+    Other.
 

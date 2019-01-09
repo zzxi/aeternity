@@ -9,15 +9,25 @@
 -export([get_host/0,
          get_port/0,
          get_extra_nonce/0,
-         state/1]).
+         state/1
+        ]).
 -endif.
 
 -record(state, {
           phase,
-          timer
+          timer,
+          extra_nonce,
+          pending_block,
+          submissions
         }).
 
+-record(pending_block, {
+          hash,
+          target
+         }).
+
 -define(MSG_TIMEOUT, application:get_env(aestratum, timeout, 30000)).
+-define(EXTRA_NONCE_BYTES, application:get_env(aestratum, extra_nonce_bytes, 4)).
 
 %% API.
 
@@ -74,12 +84,12 @@ recv_msg(#{type := req, method := Method} = Req,
          #state{phase = Phase} = State) when
       ((Method =:= authorize) or (Method =:= submit)) and
       ((Phase =:= connected) or (Phase =:= configured)) ->
-    send_not_subscribed_rsp(Req, State);
+    send_not_subscribed_rsp(Req, null, State);
 recv_msg(#{type := req, method := submit} = Req,
          #state{phase = subscribed} = State) ->
-    send_unauthorized_worker_rsp(Req, State);
+    send_unauthorized_worker_rsp(Req, null, State);
 recv_msg(Msg, State) ->
-    send_unknown_error_rsp(Msg, State).
+    send_unknown_error_rsp(Msg, unexpected_msg, State).
 
 %% JSON-RPC error responses.
 
@@ -146,22 +156,26 @@ send_configure_rsp1(ok, #{id := Id}, #state{timer = Timer} = State) ->
     {send, Rsp, State#state{phase = configured, timer = set_timer(configured)}}.
 %%send_configure_rsp1({error, Rsn}, ...
 
-send_subscribe_rsp1(ok, #{id := Id}, #state{timer = Timer} = State) ->
+send_subscribe_rsp1(ok, #{id := Id} = Req, #state{timer = Timer} = State) ->
     cancel_timer(Timer),
-    %% TODO: session resumption not supported (yet)
-    SessionId1 = null,
-    %% ?MODULE is present as meck doesn't work well without it.
-    ExtraNonce = ?MODULE:get_extra_nonce(),
-    RspMap = #{type => rsp, method => subscribe, id => Id,
-               result => [SessionId1, ExtraNonce]},
-    {ok, Rsp} = aestratum_jsonrpc:encode(RspMap),
-    %% Set timer for authorize request.
-    {send, Rsp, State#state{phase = subscribed, timer = set_timer(subscribed)}};
-send_subscribe_rsp1({error, Rsn}, #{id := Id}, State) ->
-    RspMap = #{type => rsp, method => subscribe, id => Id,
-               reason => unknown_error, data => atom_to_binary(Rsn, utf8)},
-    {ok, Rsp} = aestratum_jsonrpc:encode(RspMap),
-    {send, Rsp, State}.
+    %% TODO: Session resumption not supported (yet).
+    %% ?MODULE is here due to meck (didn't work without it).
+    case ?MODULE:get_extra_nonce() of
+        {ok, ExtraNonce} ->
+            SessionId1 = null,
+            ExtraNonce1 =
+            RspMap = #{type => rsp, method => subscribe, id => Id,
+                       result => [SessionId1, ExtraNonce]},
+            {ok, Rsp} = aestratum_jsonrpc:encode(RspMap),
+            %% Set timer for authorize request.
+            {send, Rsp, State#state{phase = subscribed,
+                                    timer = set_timer(subscribed),
+                                    extra_nonce = ExtraNonce}};
+        {error, Rsn} ->
+            send_unknown_error_rsp(Req, Rsn, State)
+    end;
+send_subscribe_rsp1({error, Rsn}, Req, State) ->
+    send_unknown_error_rsp(Req, Rsn, State).
 
 send_authorize_rsp1(ok, #{id := Id}, #state{timer = Timer} = State) ->
     cancel_timer(Timer),
@@ -194,41 +208,46 @@ send_submit_rsp1(ok, #{id := Id, user := User, job_id := JobId,
 
 %% Stratum error responses.
 
-send_not_subscribed_rsp(#{id := Id}, State) ->
+send_not_subscribed_rsp(#{id := Id}, Data, State) ->
     RspMap = #{type => rsp, id => Id, reason => not_subscribed,
-               data => null},
+               data => error_data(Data)},
     {ok, Rsp} = aestratum_jsonrpc:encode(RspMap),
     {send, Rsp, State}.
 
-send_unauthorized_worker_rsp(#{id := Id}, State) ->
+send_unauthorized_worker_rsp(#{id := Id}, Data, State) ->
     RspMap = #{type => rsp, id => Id, reason => unauthorized_worker,
-               data => null},
+               data => error_data(Data)},
     {ok, Rsp} = aestratum_jsonrpc:encode(RspMap),
     {send, Rsp, State}.
 
-send_low_difficulty_share_rsp(#{id := Id}, State) ->
+send_low_difficulty_share_rsp(#{id := Id}, Data, State) ->
     RspMap = #{type => rsp, id => Id, reason => low_difficulty_share,
-               data => null},
+               data => error_data(Data)},
     {ok, Rsp} = aestratum_jsonrpc:encode(RspMap),
     {send, Rsp, State}.
 
-send_duplicate_share_rsp(#{id := Id}, State) ->
+send_duplicate_share_rsp(#{id := Id}, Data, State) ->
     RspMap = #{type => rsp, id => Id, reason => duplicate_share,
-               data => null},
+               data => error_data(Data)},
     {ok, Rsp} = aestratum_jsonrpc:encode(RspMap),
     {send, Rsp, State}.
 
-send_job_not_found_rsp(#{id := Id}, State) ->
+send_job_not_found_rsp(#{id := Id}, Data, State) ->
     RspMap = #{type => rsp, id => Id, reason => job_not_found,
-               data => null},
+               data => error_data(Data)},
     {ok, Rsp} = aestratum_jsonrpc:encode(RspMap),
     {send, Rsp, State}.
 
-send_unknown_error_rsp(#{id := Id}, State) ->
+send_unknown_error_rsp(#{id := Id}, Data, State) ->
     RspMap = #{type => rsp, id => Id, reason => unknown_error,
-               data => null},
+               data => error_data(Data)},
     {ok, Rsp} = aestratum_jsonrpc:encode(RspMap),
     {send, Rsp, State}.
+
+error_data(null) ->
+    null;
+error_data(Data) when is_atom(Data) ->
+    atom_to_binary(Data, utf8).
 
 %% TODO: reconnect request.
 
@@ -302,17 +321,16 @@ check_job(#{user := User, job_id := JobId, miner_nonce := MinerNonce,
 
 run(Funs, Data) ->
     try
-        lists:foreach(fun(Fun) -> Fun(Data) end, Funs),
+        lists:foreach(fun(Fun) -> Fun(Data) end, Funs)
     catch
         throw:{validation_error, Rsn} ->
             validation_error(Rsn, Data)
     end.
 
-validation_error({Field, Val, ExpVal} = Rsn, #{method := Method} = Data) ->
-    lager:warning(
-      "Server session error, method: ~p, field: ~p, expected: ~p, got: ~p",
-      [Method, Field, ExpVal, Val]),
-    {error, Field}.
+validation_error(Rsn, #{method := Method} = Data) when is_atom(Rsn) ->
+    lager:warning("Server session error, method: ~p, reason: ~p",
+                  [Method, Rsn]),
+    {error, Rsn}.
 
 validation_exception(Rsn) ->
     throw({validation_error, Rsn}).
@@ -324,7 +342,7 @@ get_port() ->
     9999.
 
 get_extra_nonce() ->
-    <<"00000001">>.
+    aestratum_extra_nonce_cache:get().
 
 %% Used for testing only.
 
