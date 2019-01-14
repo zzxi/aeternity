@@ -32,22 +32,15 @@
 compile(ContractAsBinString, OptionsAsBinString) ->
     ContractText = binary_to_list(ContractAsBinString),
     Options = parse_options(OptionsAsBinString),
-    try Map = aeso_compiler:from_string(ContractText, Options),
-        {ok, serialize(Map)}
+    try aeso_compiler:from_string(ContractText, Options) of
+        {ok,Map} -> {ok,serialize(Map)};
+        {error,_} = Error -> Error              %Error is a binary string
     catch
-        %% The compiler errors.
-        error:{type_errors, Errors} ->
-            {error, list_to_binary(string:join(["** Type errors\n" | Errors], "\n"))};
-        error:{parse_errors, Errors} ->
-            {error, list_to_binary(string:join(["** Parse errors\n" | Errors], "\n"))};
-        error:{code_errors, Errors} ->
-            ErrorStrings = [ io_lib:format("~p", [E]) || E <- Errors ],
-            {error, list_to_binary(string:join(["** Code errors\n" | ErrorStrings], "\n"))};
         %% General programming errors in the compiler.
-        error:Error ->
+        Type:Error ->
             Where = hd(erlang:get_stacktrace()),
             ErrorString = io_lib:format("Error: ~p in\n   ~p", [Error,Where]),
-            {error, list_to_binary(ErrorString)}
+            {error,list_to_binary(ErrorString)}
     end.
 
 parse_options(OptionsBinString) ->
@@ -59,6 +52,10 @@ parse_options(<<"pp_sophia_code", Rest/binary>>, Acc) ->
     parse_options(Rest, [pp_sophia_code | Acc]);
 parse_options(<<"pp_ast", Rest/binary>>, Acc) ->
     parse_options(Rest, [pp_ast | Acc]);
+parse_options(<<"pp_types", Rest/binary>>, Acc) ->
+    parse_options(Rest, [pp_types | Acc]);
+parse_options(<<"pp_typed_ast", Rest/binary>>, Acc) ->
+    parse_options(Rest, [pp_typed_ast | Acc]);
 parse_options(<<"pp_icode", Rest/binary>>, Acc) ->
     parse_options(Rest, [pp_icode | Acc]);
 parse_options(<<"pp_assembler", Rest/binary>>, Acc) ->
