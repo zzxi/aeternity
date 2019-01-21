@@ -6,7 +6,7 @@
   {applications,
    [kernel,
     stdlib,
-    lager,
+    aecore, %% in order to rely on lager having been setup before this application starts processes potentially logging to lager
     aetx,
     sext
    ]},

@@ -23,7 +23,7 @@
     jobs,
     exometer_core,
     yamerl,
-    lager,
+    lager, %% in order to rely on lager started before this application being started
     aeutils,
     base58,
     sha3,
@@ -43,7 +43,8 @@
     aesophia,
     aebytecode,
     aens,
-    ranch
+    ranch,
+    setup %% in order to rely on the `$setup_hooks` having been called before this application being started
   ]},
   {env, [
          {exometer_predefined,

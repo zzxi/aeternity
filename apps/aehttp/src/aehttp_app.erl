@@ -48,7 +48,7 @@ stop(_State) ->
 %%------------------------------------------------------------------------------
 %% Check user-provided environment
 %%------------------------------------------------------------------------------
-
+%% Run as setup hook. At this stage, lager is setup with console only - no files.
 check_env() ->
     %TODO: we need to validate that all tags are present
     GroupDefaults = #{<<"chain">>        => true,

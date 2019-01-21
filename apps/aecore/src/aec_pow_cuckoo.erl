@@ -78,6 +78,7 @@
 %% 'mining > cuckoo > edge_bits' are not used together with deprecated
 %% configuration property 'mining > cuckoo > miner'.
 %%------------------------------------------------------------------------------
+%% Run as setup hook. At this stage, lager is setup with console only - no files.
 check_env() ->
     case {aeu_env:user_map([<<"mining">>, <<"cuckoo">>, <<"miners">>]),
           aeu_env:user_config([<<"mining">>, <<"cuckoo">>, <<"edge_bits">>])} of

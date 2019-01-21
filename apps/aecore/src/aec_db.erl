@@ -665,6 +665,7 @@ wait_for_tables(Tabs, Sofar, _, _) ->
 
 %% Initialization routines
 
+%% Run as setup hook. At this stage, lager is setup with console only - no files.
 check_db() ->
     try
         Mode = backend_mode(),

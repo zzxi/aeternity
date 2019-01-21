@@ -17,6 +17,7 @@
 %%% API
 %%%===================================================================
 
+%% Run as setup hook. At this stage, lager is setup with console only - no files.
 check_env() ->
     Ps = aec_governance:protocols(),
     Ps = protocols(Ps),
