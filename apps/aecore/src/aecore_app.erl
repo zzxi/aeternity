@@ -44,12 +44,7 @@ prep_stop(State) ->
 stop(_State) ->
     ok.
 
-%% Checking user-provided configs. The logic is somewhat complicated
-%% by the fact that 'setup' is not guaranteed to start before lager,
-%% so we have to be prepared to apply changes to both the lager env
-%% and the (possibly) running lager. (This problem is solvable, but not
-%% trivially. Basically, the aeternity.rel file must be pre-sorted and passed
-%% to relx.
+%% Checking user-provided configs.
 %% Run as setup hook. At this stage, lager is setup with console only - no files.
 check_env() ->
     check_env([{[<<"mining">>, <<"autostart">>], {set_env, autostart}},
