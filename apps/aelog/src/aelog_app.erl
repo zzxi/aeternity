@@ -2,6 +2,8 @@
 
 -behaviour(application).
 
+-export([check_env/0]).
+
 %% Application callbacks
 -export([start/2,
          stop/1]).
@@ -18,6 +20,10 @@
 %%====================================================================
 %% API
 %%====================================================================
+
+check_env() ->
+    check_env([{?LOGGING_HWM_CFG_KEY, fun set_hwm/1},
+               {?LOGGING_LEVEL_CFG_KEY, fun check_level/1}]).
 
 start(_StartType, _StartArgs) ->
     %% Lager is a dependency of this application so lager is
@@ -42,6 +48,19 @@ stop(_State) ->
 %%====================================================================
 %% Internal functions
 %%====================================================================
+
+check_env(Spec) ->
+    lists:foreach(
+      fun({K, F}) ->
+              case aeu_env:user_config(K) of
+                  undefined -> ignore;
+                  {ok, V}   -> set_env(F, V)
+              end
+      end, Spec).
+
+set_env(F, V) when is_function(F, 1) ->
+    F(V).
+
 start_lager_file_handlers() ->
     Sinks = lager:list_all_sinks(), %% All sinks are active.
     %% Hardcode expectation that default sink is active.

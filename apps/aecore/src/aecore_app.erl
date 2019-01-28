@@ -52,9 +52,7 @@ stop(_State) ->
 %% to relx.
 %% Run as setup hook. At this stage, lager is setup with console only - no files.
 check_env() ->
-    check_env([{?LOGGING_HWM_CFG_KEY           , fun set_hwm/1},
-               {?LOGGING_LEVEL_CFG_KEY         , fun check_level/1},
-               {[<<"mining">>, <<"autostart">>], {set_env, autostart}},
+    check_env([{[<<"mining">>, <<"autostart">>], {set_env, autostart}},
                {[<<"mining">>, <<"attempt_timeout">>], {set_env, mining_attempt_timeout}},
                {[<<"chain">>, <<"persist">>]   , {set_env, persist}},
                {[<<"chain">>, <<"db_path">>]   , fun set_db_path/1}]).
