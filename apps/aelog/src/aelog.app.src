@@ -6,9 +6,17 @@
   {applications,
    [kernel,
     stdlib,
-    lager %% in order to rely on lager started before this application being started
+    lager, %% in order to rely on lager started before this application being started
+    setup %% in order to rely on the `$setup_hooks` having been called before this application being started
    ]},
-  {env,[]},
+  {env,[
+         {'$setup_hooks',
+          [
+           {normal, [
+                     {110, {aelog_app, check_env, []}}
+                    ]}
+          ]}
+        ]},
   {modules, []},
 
   {maintainers, []},
