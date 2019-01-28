@@ -23,7 +23,7 @@
     jobs,
     exometer_core,
     yamerl,
-    lager, %% in order to rely on lager started before this application being started
+    aelog, %% in order to rely on logging having been setup before this application starts processes potentially logging
     aeutils,
     base58,
     sha3,

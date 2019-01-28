@@ -11,7 +11,7 @@
     cowboy,
     jsx,
     jesse,
-    aecore, %% in order to rely on lager having been setup before this application starts processes potentially logging to lager
+    aelog, %% in order to rely on logging having been setup before this application starts processes potentially logging
     gproc,
     poolboy
    ]},
