@@ -68,6 +68,42 @@ check_env(Spec) ->
 set_env(F, V) when is_function(F, 1) ->
     F(V).
 
+set_hwm(HWM) when is_integer(HWM) ->
+    application:set_env(lager, error_logger_hwm, HWM),
+    if_running(lager, fun() -> startup_set_hwm(HWM) end).
+
+%% Assumption: no file backends to be considered at this stage.
+startup_set_hwm(Hwm) ->
+    error_logger_lager_h:set_high_water(Hwm),
+    %% Not setting high water mark for console backend as such backend
+    %% has not any such configuration.  Compare [console
+    %% backend](https://github.com/erlang-lager/lager/blob/3.6.7/src/lager_file_backend.erl#L146)
+    %% with [file
+    %% backend](https://github.com/erlang-lager/lager/blob/3.6.7/src/lager_console_backend.erl#L171).
+    ok.
+
+check_level(L) when is_binary(L) ->
+    Level = binary_to_existing_atom(L, latin1),
+    case lists:member(Level, levels()) of
+        true ->
+            %% Assumption: no file backends to be considered at this stage.
+            ok;
+        false ->
+            lager:error("Unknown log level: ~p", [Level]),
+            ignore
+    end.
+
+levels() ->
+    %% copied from lager.hrl
+    [debug, info, notice, warning, error, critical, alert, emergency, none].
+
+if_running(App, F) ->
+    case is_app_running(App) of
+        true  ->
+            F();
+        false -> ok
+    end.
+
 start_lager_file_handlers() ->
     Sinks = lager:list_all_sinks(), %% All sinks are active.
     %% Hardcode expectation that default sink is active.

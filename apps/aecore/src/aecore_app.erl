@@ -75,42 +75,6 @@ set_db_path(Path) ->
     application:set_env(mnesia, dir, MnesiaDir),
     application:set_env(aecore, db_path, Path).
 
-set_hwm(HWM) when is_integer(HWM) ->
-    application:set_env(lager, error_logger_hwm, HWM),
-    if_running(lager, fun() -> startup_set_hwm(HWM) end).
-
-%% Assumption: no file backends to be considered at this stage.
-startup_set_hwm(Hwm) ->
-    error_logger_lager_h:set_high_water(Hwm),
-    %% Not setting high water mark for console backend as such backend
-    %% has not any such configuration.  Compare [console
-    %% backend](https://github.com/erlang-lager/lager/blob/3.6.7/src/lager_file_backend.erl#L146)
-    %% with [file
-    %% backend](https://github.com/erlang-lager/lager/blob/3.6.7/src/lager_console_backend.erl#L171).
-    ok.
-
-check_level(L) when is_binary(L) ->
-    Level = binary_to_existing_atom(L, latin1),
-    case lists:member(Level, levels()) of
-        true ->
-            %% Assumption: no file backends to be considered at this stage.
-            ok;
-        false ->
-            lager:error("Unknown log level: ~p", [Level]),
-            ignore
-    end.
-
-levels() ->
-    %% copied from lager.hrl
-    [debug, info, notice, warning, error, critical, alert, emergency, none].
-
-if_running(App, F) ->
-    case is_app_running(App) of
-        true  ->
-            F();
-        false -> ok
-    end.
-
 %% This function guarantees the caller that the specified app has not
 %% started - not that it has not begun starting.
 %%
