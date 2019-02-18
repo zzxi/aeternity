@@ -716,7 +716,7 @@ post_blocks(From, To, []) ->
 post_blocks(From, _To, [{Height, _Hash, {_PeerId, local}} | Blocks]) ->
     post_blocks(From, Height, Blocks);
 post_blocks(From, To, [{Height, _Hash, {PeerId, Block}} | Blocks]) ->
-    case add_generation(Block) of
+    case add_gen(Block) of
         ok ->
             post_blocks(From, Height, Blocks);
         {error, Reason} ->
@@ -731,6 +731,13 @@ post_blocks(From, To, [{Height, _Hash, {PeerId, Block}} | Blocks]) ->
 %% blocks we limit the total amount of work the conductor has to perform in
 %% each synchronous call.
 %% Map contains key dir, saying in which direction we sync
+add_gen(G) ->
+    TS1 = os:timestamp(),
+    R   = add_generation(G),
+    TD  = timer:now_diff(os:timestamp(), TS1),
+    add_stats({insert_gen, aec_blocks:height(maps:get(key_block, G)), TD}),
+    R.
+
 add_generation(#{dir := forward, key_block := _KB, micro_blocks := MBs}) ->
     add_blocks(MBs);
 add_generation(#{dir := backward, key_block := KB, micro_blocks := MBs}) ->
@@ -911,3 +918,63 @@ sync_progress(#state{sync_tasks = SyncTasks} = State) ->
                 false -> SyncProgress
             end
     end.
+
+
+%%% Hacky sync stats
+start_stats() ->
+    case whereis(sync_stats) of
+        undefined ->
+            register(sync_stats, spawn(fun() -> sync_stats_loop(#{fetch => #{}, insert => #{}}) end)),
+            epoch_sync:info("Registered ~p as sync_stats", [whereis(sync_stats)]);
+        Pid ->
+            Pid
+    end.
+
+add_stats(Msg) ->
+    case whereis(sync_stats) of
+        Pid when is_pid(Pid) ->
+            Pid ! Msg;
+        undefined ->
+            epoch_sync:info("Starting new stats ~p", [Msg]),
+            try start_stats(), sync_stats ! Msg
+            catch _:_ -> ok end
+    end.
+
+sync_stats_loop(Stats = #{fetch := F, insert := I}) ->
+    receive
+        {fetch_gen, Gen, Time} ->
+            sync_stats_loop(Stats#{fetch := F#{Gen => [Time | maps:get(Gen, F, [])]}});
+        {insert_gen, Gen, Time} ->
+            I1 = I#{Gen => Time},
+            if Gen rem 1000 == 0 ->
+                TS = justnow(),
+                show_stats(Gen, Stats#{insert := I1#{stop => TS}}),
+                sync_stats_loop(Stats#{insert := #{}});
+               Gen rem 1000 == 1 ->
+                TS = justnow(),
+                sync_stats_loop(Stats#{insert := I1#{start => TS - Time}});
+               true ->
+                sync_stats_loop(Stats#{insert := I1})
+            end
+    end.
+
+justnow() ->
+    {MeS, S, MiS} = os:timestamp(),
+    MeS * 1000000 * 1000000 + S * 1000000 + MiS.
+
+show_stats(Gen, Stats) ->
+    spawn(fun() -> show_stats_(Gen, Stats) end).
+
+show_stats_(Gen, #{insert := I}) ->
+    Start = maps:get(start, I),
+    Stop  = maps:get(stop, I),
+    I1 = maps:remove(start, maps:remove(stop, I)),
+    TotalInsert = lists:sum([ T || {_G, T} <- maps:to_list(I1) ]),
+    TotalTime   = Stop - Start,
+    epoch_sync:info("Sync stats at ~p", [Gen]),
+    epoch_sync:info("Last 1000 generations took ~.2fms, out of ~.2fms spent inserting, i.e. ~.2f%",
+               [TotalTime / 1000, TotalInsert / 1000, (TotalInsert * 100.0) / TotalTime]),
+    TS = lists:reverse(lists:keysort(2, maps:to_list(I1))),
+    [ epoch_sync:info(" ~p) Generation ~p took ~.2fms", [Pos, G, T / 1000])
+        || {Pos, {G, T}} <- lists:zip(lists:seq(1, 5), lists:sublist(TS, 5)) ].
+
