@@ -772,7 +772,17 @@ start_mining(#state{key_block_candidates = [{_, #candidate{top_hash = OldHash}} 
     %% Candidate generated with stale top hash.
     %% Regenerate the candidate.
     create_key_block_candidate(State);
-start_mining(#state{key_block_candidates = [{HeaderBin, Candidate} | Candidates]} = State) ->
+start_mining(#state{stratum_mode = true, key_block_candidates = [{HeaderBin,
+                    Candidate = #candidate{refs = StratumRefs}} | Candidates]} = State) when StratumRefs =:= 0  ->
+    poch_mining:info("Stratum dispatch ~p", [HeaderBin]),
+    Target            = aec_blocks:target(Candidate#candidate.block),
+    Info              = [{top_block_hash, State#state.top_block_hash}],
+    aec_events:publish(start_mining, Info), %% TODO: check if need to swap for stratum specific
+    aec_events:publish(stratum_new_candidate, [{HeaderBin, Candidate, Target}]),
+    Candidate1 = register_stratum(Candidate),
+    State1 = State#state{key_block_candidates = [{HeaderBin, Candidate1} | Candidates]},
+    start_mining(State1);
+start_mining(#state{stratum_mode = false, key_block_candidates = [{HeaderBin, Candidate} | Candidates]} = State) ->
     case available_miner_instance(State) of
         none -> State;
         Instance ->
@@ -794,6 +804,9 @@ start_mining(#state{key_block_candidates = [{HeaderBin, Candidate} | Candidates]
             epoch_mining:info("Miner ~p started", [Pid]),
             start_mining(State3)
     end.
+
+register_stratum(Candidate = #candidate{refs  = Refs}) ->
+    Candidate#candidate{refs  = Refs + 1}.
 
 register_miner(Candidate = #candidate{refs  = Refs}, Nonce, MinerConfig) ->
     NextNonce = aeminer_pow:next_nonce(Nonce, MinerConfig),
