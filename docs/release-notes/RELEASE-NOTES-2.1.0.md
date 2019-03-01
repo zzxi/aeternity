@@ -8,9 +8,11 @@ Please refer to the notes below for details and backward compatibility.
 Regarding renaming, this release:
 * Changes Erlang node name from `epoch@localhost` to `aeternity@localhost`. This impacts persisted database (the node name is stored in it). **In order to use persisted database created before this release, new tool - `rename_db` - must be used.**
   * The tool `rename_db` is included in the release. It takes one argument - path to `schema.DAT` file. The file `schema.DAT` can be found in the persisted database directory.
-Example usage:
+  * Example usage of the tool:
     * Using absolute path of `schema.DAT` file - `./bin/aeternity rename_db /node/aeternity/node/my-old-db-path/mnesia/schema.DAT`;
     * Using relative path of `schema.DAT` file - `./bin/aeternity rename_db data/mnesia/SCHEMA.DAT`.
+  * Note that, for some environments (e.g. Docker), the node may not be able  to start for the first time after database renaming. If that is the case, please retry to start a node, and the node should manage to start at the second attempt.
+  * Before renaming process is conducted, `rename_db` tool automatically creates `schema.DAT.backup` file, next to the original `schema.DAT` file. The file `schema.DAT.backup` contains the backup of `schema.DAT`. If `rename_db` tool is interrupted, and your `schema.DAT` file gets corrupted, please restore from the backup by simply replacing corrupted `schema.DAT` with `schema.DAT.backup`. Then re-run `rename_db` tool.
 
 Regarding other improvements (?? - to be specified, what else is included), this release:
 * Does all the things mentioned temporarily in files [/docs/release-notes/next/PT-*.md](/docs/release-notes/next/).
@@ -115,4 +117,5 @@ Information, e.g. height, of the top block of the longest chain as seen by these
 Setting up your node consists of:
 * Configuring your node - see instructions in [the dedicated separate document](../../docs/configuration.md);
 * Starting your node and verifying it works as expected - see instructions in [the dedicated separate document](../../docs/operation.md).
+
 
