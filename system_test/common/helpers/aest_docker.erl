@@ -75,7 +75,7 @@
     config => #{atom() => term()},
     % Tuple of host/guest paths where the node DB is meant to be if persisted
     db_path => {binary(), binary()} | undefined,
-    entrypoint => [list()] | undefined
+    entrypoint => [string(), ...]
 }.
 
 %% State of a node
