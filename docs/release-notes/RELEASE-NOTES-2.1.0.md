@@ -10,7 +10,8 @@ Regarding renaming, this release:
   * The tool `rename_db` is included in the release. It takes one argument - path to `schema.DAT` file. The file `schema.DAT` can be found in the persisted database directory.
   * Example usage of the tool:
     * Using absolute path of `schema.DAT` file - `./bin/aeternity rename_db /node/aeternity/node/my-old-db-path/mnesia/schema.DAT`;
-    * Using relative path of `schema.DAT` file - `./bin/aeternity rename_db data/mnesia/SCHEMA.DAT`.
+    * Using relative path of `schema.DAT` file - `./bin/aeternity rename_db data/mnesia/SCHEMA.DAT`;
+    * If you are running a node using Docker (assuming you either don't have `db_path` set in your config, or it is set to `/home/aeternity/node/data`) - `docker run --entrypoint=/bin/bash -v ~/.aeternity/myaedb:/home/aeternity/node/data/mnesia -v ~/.aeternity/myaeternity.yaml:/home/aeternity/.aeternity/aeternity/aeternity.yaml aeternity/aeternity -c "/home/aeternity/node/bin/aeternity rename_db /home/aeternity/node/data/mnesia/schema.DAT"`
   * Note that, for some environments (e.g. Docker), the node may not be able  to start for the first time after database renaming. If that is the case, please retry to start a node, and the node should manage to start at the second attempt.
   * Before renaming process is conducted, `rename_db` tool automatically creates `schema.DAT.backup` file, next to the original `schema.DAT` file. The file `schema.DAT.backup` contains the backup of `schema.DAT`. If `rename_db` tool is interrupted, and your `schema.DAT` file gets corrupted, please restore from the backup by simply replacing corrupted `schema.DAT` with `schema.DAT.backup`. Then re-run `rename_db` tool.
 
