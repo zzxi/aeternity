@@ -81,7 +81,7 @@ groups() ->
     [
      {all_tests, [sequence], [ {group, transactions}
                              , {group, errors}
-                             , {group, throughput},
+                             , {group, throughput}
                              , {group, signatures}
                              , {group, channel_ids}
                              ]},
