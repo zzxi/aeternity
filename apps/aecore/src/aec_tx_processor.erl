@@ -1079,9 +1079,9 @@ assert_oracle_formats(QFormat, RFormat, ?ABI_SOPHIA_1, S) ->
     end.
 
 assert_typerep_format(Format, Error) ->
-    try aeso_heap:from_binary(typerep, Format) of
+    try aeb_heap:from_binary(typerep, Format) of
         {ok, TypeRep} ->
-            case aeso_heap:to_binary(TypeRep) of
+            case aeb_heap:to_binary(TypeRep) of
                 Format -> ok;
                 _      -> runtime_error(Error)
             end;
@@ -1120,10 +1120,10 @@ assert_oracle_format_match(Oracle, Format, Content) ->
         ?ABI_SOPHIA_1 ->
             %% Check that the content can be decoded as the type
             %% and that if we encoded it again, it becomes the content.
-            {ok, TypeRep} = aeso_heap:from_binary(typerep, Format),
-            try aeso_heap:from_binary(TypeRep, Content) of
+            {ok, TypeRep} = aeb_heap:from_binary(typerep, Format),
+            try aeb_heap:from_binary(TypeRep, Content) of
                 {ok, Res} ->
-                    case aeso_heap:to_binary(Res) of
+                    case aeb_heap:to_binary(Res) of
                         Content -> ok;
                         _Other -> runtime_error(bad_format)
                     end;
@@ -1205,9 +1205,9 @@ assert_contract_byte_code(?ABI_SOLIDITY_1, _SerializedCode, _CallData, _S) ->
     ok.
 
 assert_contract_init_function(CallData, TypeInfo) ->
-    case aeso_abi:get_function_hash_from_calldata(CallData) of
+    case aeb_abi:get_function_hash_from_calldata(CallData) of
         {ok, Hash} ->
-            case aeso_abi:function_name_from_type_hash(Hash, TypeInfo) of
+            case aeb_abi:function_name_from_type_hash(Hash, TypeInfo) of
                 {ok, <<"init">>} -> ok;
                 _ -> runtime_error(bad_init_function)
             end;
