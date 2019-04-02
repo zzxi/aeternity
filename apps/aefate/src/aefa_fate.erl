@@ -317,9 +317,9 @@ dup(#{ accumulator := X, accumulator_stack := Stack} = ES) ->
        , accumulator_stack := [X|Stack]}.
 
 dup(N, #{ accumulator := X, accumulator_stack := Stack} = ES) ->
-    {X1, Stack} = get_n(N, [X|Stack]),
+    {X1, Stack1} = get_n(N, [X|Stack]),
     ES#{ accumulator => X1
-       , accumulator_stack := Stack}.
+       , accumulator_stack := Stack1}.
 
 get_n(0, [X|XS]) -> {X, [X|XS]};
 get_n(N, [X|XS]) ->
