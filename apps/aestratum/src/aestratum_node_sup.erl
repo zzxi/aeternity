@@ -2,7 +2,7 @@
 
 -behaviour(supervisor).
 
--export([start_link/0]).
+-export([start_link/1]).
 
 -export([init/1]).
 
@@ -10,17 +10,16 @@
 %%% API functions
 %%%===================================================================
 
-start_link() ->
-    supervisor:start_link({local, ?MODULE}, ?MODULE, []).
+start_link(Config) ->
+    supervisor:start_link({local, ?MODULE}, ?MODULE, [Config]).
 
 %%%===================================================================
 %%% Supervisor callbacks
 %%%===================================================================
-init([]) ->
-    {ok, Conf} = aeu_env:user_config(<<"stratum">>),
+init([Config]) ->
     #{<<"beneficiaries">> := BenefAddrPctShares,
       <<"reward_last_rounds">> := LastN,
-      <<"keys">> := [{<<"dir">>, Dir}]} = maps:from_list(Conf),
+      <<"keys">> := [{<<"dir">>, Dir}]} = maps:from_list(Config),
     ReadKey = fun (F) -> file:read_file(filename:join([code:priv_dir(aestratum), Dir, F])) end,
     {ok, PubKey}  = ReadKey("sign_key.pub"),
     {ok, PrivKey} = ReadKey("sign_key"),
