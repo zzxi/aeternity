@@ -11,15 +11,17 @@
          share_target/1,
          desired_solve_time/1,
          max_solve_time/1,
-         timestamp/1,
-         submission/1,
+         created/1,
+         shares/1,
+         error_shares/1,
          is_submitted/1,
          solve_time/1,
          make_id/3
         ]).
 
--export([set_submission/2,
-         validate_submission/1
+-export([add_share/2,
+         add_error_share/2,
+         is_share_present/3
         ]).
 
 -export_type([job/0]).
@@ -27,28 +29,32 @@
 -record(job, {
           id,
           block_hash,
-          block_target,
           block_version,
+          block_target,
           share_target,
           desired_solve_time,
           max_solve_time,
-          timestamp,
-          submission
-         }).
+          shares,
+          error_shares,
+          created
+        }).
 
 -opaque job() :: #job{}.
 
 %% API.
 
-new(Id, BlockHash, BlockTarget, BlockVersion, ShareTarget, DesiredSolveTime, MaxSolveTime) ->
-    #job{id                 = Id,
-         block_hash         = BlockHash,
-         block_target       = BlockTarget,
-         block_version      = BlockVersion,
-         share_target       = ShareTarget,
+new(Id, BlockHash, BlockVersion, BlockTarget, ShareTarget,
+    DesiredSolveTime, MaxSolveTime) ->
+    #job{id = Id,
+         block_hash = BlockHash,
+         block_version = BlockVersion,
+         block_target = BlockTarget,
+         share_target = ShareTarget,
          desired_solve_time = DesiredSolveTime,
-         max_solve_time     = MaxSolveTime,
-         timestamp          = aestratum_utils:timestamp()}.
+         max_solve_time = MaxSolveTime,
+         shares = [],
+         error_shares = [],
+         created = aestratum_utils:timestamp()}.
 
 id(#job{id = Id}) ->
     Id.
@@ -56,11 +62,11 @@ id(#job{id = Id}) ->
 block_hash(#job{block_hash = BlockHash}) ->
     BlockHash.
 
-block_target(#job{block_target = BlockTarget}) ->
-    BlockTarget.
-
 block_version(#job{block_version = BlockVersion}) ->
     BlockVersion.
+
+block_target(#job{block_target = BlockTarget}) ->
+    BlockTarget.
 
 share_target(#job{share_target = ShareTarget}) ->
     ShareTarget.
@@ -71,35 +77,49 @@ desired_solve_time(#job{desired_solve_time = DesiredSolveTime}) ->
 max_solve_time(#job{max_solve_time = MaxSolveTime}) ->
     MaxSolveTime.
 
-timestamp(#job{timestamp = StartTime}) ->
-    StartTime.
+created(#job{created = Created}) ->
+    Created.
 
-submission(#job{submission = Submission}) ->
-    Submission.
+shares(#job{shares = Shares}) ->
+    Shares.
 
-is_submitted(#job{submission = Submission}) when Submission =/= undefined ->
+error_shares(#job{error_shares = ErrorShares}) ->
+    ErrorShares.
+
+is_submitted(#job{shares = Shares}) when Shares =/= [] ->
     true;
-is_submitted(#job{submission = undefined}) ->
+is_submitted(#job{shares = []}) ->
     false.
 
-solve_time(#job{timestamp = Timestamp, submission = Submission}) when
-      Submission =/= undefined ->
-    aestratum_submission:timestamp(Submission) - Timestamp;
-solve_time(#job{max_solve_time = MaxSolveTime, submission = undefined}) ->
+solve_time(#job{created = Created, shares = Shares}) when Shares =/= [] ->
+    %% The shortest time is considered to be the solve time. The first
+    %% submitted share, which has the shortest solve time, is the last in
+    %% the list.
+    Share = lists:last(Shares),
+    aestratum_share:created(Share) - Created;
+solve_time(#job{max_solve_time = MaxSolveTime, shares = []}) ->
     MaxSolveTime.
 
-make_id(BlockHash, BlockTarget, BlockVersion) ->
-    make_id1(BlockHash, BlockTarget, BlockVersion).
+make_id(BlockHash, BlockVersion, BlockTarget) ->
+    make_id1(BlockHash, BlockVersion, BlockTarget).
 
-set_submission(Submission, Job) ->
-    Job#job{submission = Submission}.
+add_share(Share, #job{shares = Shares} = Job) ->
+    %% TODO: add limit on how many shares can be submitted per job.
+    Job#job{shares = [Share | Shares]}.
 
-validate_submission(_Job) ->
-    ok.
+add_error_share(ErrorShare, #job{error_shares = ErrorShares} = Job) ->
+    %% TODO: add limit on how many error shares can be submitted per job.
+    Job#job{error_shares = [ErrorShare | ErrorShares]}.
+
+is_share_present(MinerNonce, Pow, #job{shares = Shares}) ->
+    lists:any(
+      fun(Share) ->
+              aestratum_share:is_duplicate(MinerNonce, Pow, Share)
+      end, Shares).
 
 %% Internal functions.
 
-make_id1(BlockHash, BlockTarget, BlockVersion) ->
+make_id1(BlockHash, BlockVersion, BlockTarget) ->
     BlockTarget1 = aestratum_target:to_hex(BlockTarget),
     <<Id:8/binary, _Rest/binary>> =
         crypto:hash(sha256, [BlockHash, BlockTarget1, BlockVersion]),
@@ -110,5 +130,6 @@ to_hex(Bin) ->
             if N < 10 -> <<($0 + N)>>;
                true   -> <<(87 + N)>>   %% 87 = ($a - 10)
             end
-        end || <<N:4>> <= Bin
+      end || <<N:4>> <= Bin
     >>.
+
