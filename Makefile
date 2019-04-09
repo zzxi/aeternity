@@ -297,7 +297,7 @@ $(AEVM_EXTERNAL_TEST_DIR)/ethereum_tests:
 
 ## Info re tests using QuickCheck.
 EQC_TEST_REPO = https://github.com/lucafavatella/epoch-eqc.git
-EQC_TEST_VERSION = 9cc825c
+EQC_TEST_VERSION = 002d7c7
 
 .PHONY: quickcheck-test
 quickcheck-test: eqc
