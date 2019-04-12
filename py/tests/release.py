@@ -341,7 +341,7 @@ def main(argv):
     top = node_objs[0].get_current_key_block()
     height = top.height
     max_height = blocks_to_mine + height
-    test_failed = False
+    test_failed = True
     try:
         print("Will mine till block " +  str(max_height))
         while height < max_height:
