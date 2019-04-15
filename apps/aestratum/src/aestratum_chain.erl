@@ -17,6 +17,7 @@
 -export([start_link/2,
          payout_rewards/3,
          get_reward_key_header/1,
+         submit_solution/3,
          hash_header/1,
          header_info/1]).
 
@@ -47,7 +48,7 @@
 
 -record(chain_state,
         {last_keyblock,
-         new_keyblock_candidate,
+         candidates,
          benef_sum_pcts,
          caller_account,
          sign_priv_key,
@@ -63,6 +64,9 @@ start_link(BenefSumPcts, {_, _} = Keys) ->
 payout_rewards(Height, PoolRewards, MinersRewards) ->
     gen_server:cast(?MODULE, {payout_rewards, Height, PoolRewards, MinersRewards}).
 
+submit_solution(BlockHash, Nonce, Evidence) ->
+    gen_server:call(?MODULE, {submit_solution, BlockHash, Nonce, Evidence}).
+
 %%%===================================================================
 %%% gen_server callbacks
 %%%===================================================================
@@ -72,6 +76,9 @@ init([BenefSumPcts, {SignPubKey, SignPrivKey}]) ->
     {ok, _} = timer:send_interval(?CHAIN_PAYMENT_TX_CHECK_INTERVAL, chain_payment_tx_check),
     {ok, #{} = Contract} =
         aeso_compiler:file(filename:join(code:priv_dir(aestratum), "Payout.aes")),
+
+    %% Find something GC friendly maybe?
+    CandidateCache = dict:new(),
 
     %% TODO - get balance from chain
     CallerAccount = aec_accounts:new(SignPubKey, 1000000000000000000000),
@@ -85,9 +92,17 @@ init([BenefSumPcts, {SignPubKey, SignPrivKey}]) ->
                       benef_sum_pcts = BenefSumPcts,
                       caller_account = CallerAccount,
                       sign_priv_key = SignPrivKey,
-                      contract = Contract1}}. %% TODO
+                      contract = Contract1,
+                      candidates = CandidateCache}}. %% TODO
 
 
+handle_call({submit_solution, BlockHash, Nonce, Evidence}, _From,
+            #chain_state{candidates = Candidates0} = State) ->
+    {Candidate, Candidates1} = dict:take(BlockHash, Candidates0),
+    %% TODO: Add monitoring or link
+    {HeaderBin, _, _, ConductorPid} = Candidate,
+    ConductorPid ! {stratum_reply, {{ok, {Nonce, Evidence}}, HeaderBin}},
+    {reply, ok, State#chain_state{candidates = Candidates1}};
 handle_call(_Req, _From, State) ->
     {reply, ok, State}.
 
@@ -106,20 +121,21 @@ handle_info(chain_top_check, #chain_state{} = State) ->
 handle_info(chain_payment_tx_check, #chain_state{} = State) ->
     delete_complete_payments(),
     {noreply, State};
-handle_info({gproc_ps_event, stratum_new_candidate, #{info := Info}}, State) ->
-    ?info("new candidate info: ~p", [Info]),
+handle_info({gproc_ps_event, stratum_new_candidate, #{info := Info}}, #chain_state{candidates = Candidates0} = State) ->
+    ?info("New candidate info: ~p", [Info]),
     State1 = case Info of
-                 [{HeaderBin, #candidate{block = {key_block, KeyHeader}}, TargetSCI}] ->
+                 [{HeaderBin, #candidate{block = {key_block, KeyHeader}}, TargetSCI, _ServerPid}] ->
                      Target = aeminer_pow:scientific_to_integer(TargetSCI),
                      BlockHash = aestratum_miner:hash_data(HeaderBin),
+                     Candidates1 = dict:store(BlockHash, Info, Candidates0),
                      ChainEvent = #{event => recv_block,
                                     block => #{block_target => Target,
                                                block_hash => hex_encode(BlockHash),
                                                block_version => aec_headers:version(KeyHeader)}},
                      aestratum_user_register:notify({chain, ChainEvent}),
-                     State#chain_state{new_keyblock_candidate = Info};
+                     State#chain_state{candidates = Candidates1};
                  _ ->
-                     lager:info("Malformed Candidate for Stratum ~p", [Info]),
+                     ?info("Malformed Candidate for Stratum ~p", [Info]),
                      State
              end,
     {noreply, State1};
