@@ -38,6 +38,7 @@
 -define(PAYMENT_CONTRACT_MIN_GAS_MULTIPLIER, 1.3).
 
 -include("aestratum.hrl").
+-include("aestratum_log.hrl").
 -include_lib("aecore/src/aec_conductor.hrl").
 -include_lib("aecontract/src/aecontract.hrl").
 -include_lib("stdlib/include/ms_transform.hrl").
@@ -122,7 +123,7 @@ handle_info(chain_payment_tx_check, #chain_state{} = State) ->
     delete_complete_payments(),
     {noreply, State};
 handle_info({gproc_ps_event, stratum_new_candidate, #{info := Info}}, #chain_state{candidates = Candidates0} = State) ->
-    ?info("New candidate info: ~p", [Info]),
+    ?INFO("New candidate info: ~p", [Info]),
     State1 = case Info of
                  [{HeaderBin, #candidate{block = {key_block, KeyHeader}}, TargetSCI, _ServerPid}] ->
                      Target = aeminer_pow:scientific_to_integer(TargetSCI),
@@ -135,7 +136,7 @@ handle_info({gproc_ps_event, stratum_new_candidate, #{info := Info}}, #chain_sta
                      aestratum_user_register:notify({chain, ChainEvent}),
                      State#chain_state{candidates = Candidates1};
                  _ ->
-                     ?info("Malformed Candidate for Stratum ~p", [Info]),
+                     ?INFO("Malformed Candidate for Stratum ~p", [Info]),
                      State
              end,
     {noreply, State1};
@@ -200,7 +201,7 @@ send_payment(#aestratum_payment{fee = Fee,
     SignedTx = aetx_sign:new(CallTx, [enacl:sign_detached(SerializedTx, SK)]),
     TxHash = aetx_sign:hash(SignedTx),
     aec_tx_pool:push(SignedTx),
-    ?info("payment contract call tx ~p pushed to mempool, rewarding ~p beneficiaries using fee ~p and gas ~p",
+    ?INFO("payment contract call tx ~p pushed to mempool, rewarding ~p beneficiaries using fee ~p and gas ~p",
           [TxHash, maps:size(Transfers), Fee, Gas]),
     transaction(fun () -> mnesia:write(P#aestratum_payment{tx_hash = TxHash}) end),
     TxHash.
@@ -212,7 +213,7 @@ create_payments(Height, BlockReward, PoolRewards, MinersRewards,
     MinerRewards = BlockReward - BenefRewards,
     P0 = create_payment(Height, 0, BenefRewards, PoolRewards, Caller, Contract),
     Ps = create_payments(Height, 1, MinerRewards, MinersRewards, Caller, Contract),
-    ?info("created payments at block height ~p, for ~p pool operators and ~p miners, distributing ~p tokens",
+    ?INFO("created payments at block height ~p, for ~p pool operators and ~p miners, distributing ~p tokens",
           [Height, maps:size(PoolRewards), maps:size(MinerRewards), BlockReward]),
     Ps#{0 => P0}.
 
