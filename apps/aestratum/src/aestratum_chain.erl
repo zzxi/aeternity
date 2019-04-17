@@ -61,8 +61,8 @@
 %%% API
 %%%===================================================================
 
-start_link(BenefSumPcts, {_, _} = Keys, ContractPubKey) ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [BenefSumPcts, Keys, ContractPubKey], []).
+start_link(BenefSumPcts, {_, _} = Keys, ContractAddress) ->
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [BenefSumPcts, Keys, ContractAddress], []).
 
 -spec payout_rewards(non_neg_integer(), non_neg_integer(), map(), map()) -> ok.
 payout_rewards(Height, BlockReward, PoolRewards, MinersRewards) ->
@@ -75,22 +75,24 @@ submit_solution(BlockHash, Nonce, Evidence) ->
 %%% gen_server callbacks
 %%%===================================================================
 
-init([BenefSumPcts, {CallerPubKey, CallerPrivKey}, ContractPubKey]) ->
+init([BenefSumPcts, {CallerPubKey, CallerPrivKey}, ContractAddress]) ->
     ContractPath = filename:join(code:priv_dir(aestratum), "Payout.aes"),
     {ok, _} = timer:send_interval(?CHAIN_TOP_CHECK_INTERVAL, chain_top_check),
     {ok, _} = timer:send_interval(?CHAIN_PAYMENT_TX_CHECK_INTERVAL, chain_payment_tx_check),
     {ok, Contract} = aeso_compiler:file(ContractPath),
     {value, CallerAcc} = aec_chain:get_account(CallerPubKey),
     CallerAddress = aehttp_api_encoder:encode(account_pubkey, CallerPubKey),
-    ?info("using Stratum operator account ~s (balance = ~p, nonce = ~p)",
+    ?INFO("using Stratum operator account ~s (balance = ~p, nonce = ~p)",
           [CallerAddress, aec_accounts:balance(CallerAcc), aec_accounts:nonce(CallerAcc)]),
+    {contract_pubkey, ContractPubKey} = aehttp_api_encoder:decode(ContractAddress),
+    ?INFO("using Stratum contract address ~s", [ContractAddress]),
     aec_events:subscribe(stratum_new_candidate),
     {ok, #chain_state{last_keyblock = aec_chain:top_key_block_hash(),
                       benef_sum_pcts = BenefSumPcts,
                       caller_nonce = aec_accounts:nonce(CallerAcc),
                       caller_pub_key = CallerPubKey,
                       caller_priv_key = CallerPrivKey,
-                      candidates = dict:new(), %% Find something GC friendly maybe?
+                      candidates = dict:new(), %% MZ: Find something GC friendly maybe?
                       contract = Contract#{contract_pk => ContractPubKey}}}.
 
 
@@ -206,7 +208,7 @@ send_payment(#aestratum_payment{nonce = Nonce,
     SignedTx = aetx_sign:new(CallTx, [enacl:sign_detached(SerializedTx, CallerSK)]),
     TxHash = aetx_sign:hash(SignedTx),
     aec_tx_pool:push(SignedTx),
-    ?info("payment contract call tx ~p (caller nonce = ~p) pushed to mempool, rewarding ~p beneficiaries using fee ~p and gas ~p",
+    ?INFO("payment contract call tx ~p (caller nonce = ~p) pushed to mempool, rewarding ~p beneficiaries using fee ~p and gas ~p",
           [TxHash, Nonce, maps:size(Transfers), Fee, Gas]),
     transaction(fun () -> mnesia:write(P#aestratum_payment{tx_hash = TxHash}) end),
     TxHash.
@@ -219,7 +221,7 @@ create_payments(Height, BlockReward, PoolRewards, MinersRewards,
     MinerTokens = BlockReward - BenefTokens,
     P0 = create_payment(Height, 0, BenefTokens, PoolRewards, {CallerPK, Nonce}, Contract),
     Ps = create_payments(Height, 1, MinerTokens, MinersRewards, {CallerPK, Nonce + 1}, Contract),
-    ?info("created payments at block height ~p, for ~p pool operators and ~p miners, distributing ~p tokens",
+    ?INFO("created payments at block height ~p, for ~p pool operators and ~p miners, distributing ~p tokens",
           [Height, maps:size(PoolRewards), maps:size(MinersRewards), BlockReward]),
     [P0 | Ps].
 
