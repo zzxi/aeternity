@@ -176,7 +176,7 @@ make_shortcut(Config) ->
     ok = filelib:ensure_dir(filename:join(PrivDir, "foo")),
     Shortcut = shortcut_dir(Config),
     delete_file(Shortcut),
-    ok = file:make_symlink(PrivDir, Shortcut),
+    ok = rlx_util:symlink_or_copy(PrivDir, Shortcut),
     ct:log("Made symlink ~s to ~s", [PrivDir, Shortcut]),
     ok.
 
@@ -602,8 +602,8 @@ setup_node(N, Top, Epoch, Config) ->
     filelib:ensure_dir(filename:join(DDir, "foo")),
     cp_dir(filename:join(Epoch, "releases"), DDir ++ "/"),
     cp_dir(filename:join(Epoch, "bin"), DDir ++ "/"),
-    symlink(filename:join(Epoch, "lib"), filename:join(DDir, "lib")),
-    symlink(filename:join(Epoch, "patches"), filename:join(DDir, "patches")),
+    rlx_util:symlink_or_copy(filename:join(Epoch, "lib"), filename:join(DDir, "lib")),
+    rlx_util:symlink_or_copy(filename:join(Epoch, "patches"), filename:join(DDir, "patches")),
     {ok, VerContents} = file:read_file(filename:join(Epoch, "VERSION")),
     [VerB |_ ] = binary:split(VerContents, [<<"\n">>, <<"\r">>], [global]),
     Version = binary_to_list(VerB),
@@ -676,11 +676,6 @@ cp_file(From, To) ->
     end,
     ok.
 
-symlink(From, To) ->
-    ok = file:make_symlink(From, To),
-    ct:log("symlinked ~s to ~s", [From, To]),
-    ok.
-
 cmd(Cmd, Dir, Args) ->
     cmd(Cmd, Dir, ".", Args, []).
 cmd(Cmd, Dir, BinDir, Args) ->
@@ -704,6 +699,7 @@ cmd_run(Cmd, Dir, BinDir, Args, Env, FindLocalBin) ->
     Opts = [
             {env, Env},
             exit_status,
+	    in,
             overlapped_io,
 	    stderr_to_stdout,
             {args, Args},
