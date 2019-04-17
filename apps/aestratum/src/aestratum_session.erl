@@ -14,23 +14,103 @@
 -export([state/1]).
 -endif.
 
+-include("aestratum_log.hrl").
+
 -export_type([session/0]).
 
+-type phase()                         :: connected
+                                       | configured
+                                       | subscribed
+                                       | authorized
+                                       | disconnected.
+
+-type timer()                         :: {reference(), phase()}.
+
+-type extra_nonce()                   :: aestratum_nonce:part_nonce().
+
+-type accept_blocks()                 :: boolean().
+
+-type share_target()                  :: aestratum_target:int_target().
+
+-type max_share_target()              :: aestratum_target:int_target().
+
+-type share_target_diff_threshold()   :: float().
+
+-type desired_solve_time()            :: aestratum_target:solve_time().
+
+-type max_solve_time()                :: aestratum_target:solve_time().
+
+-type job_queue()                     :: aestratum_job_queue:job_queue().
+
+-type raw_msg()                       :: aestratum_jsonrpc:raw_msg().
+
+-type event()                         :: {conn, conn_event()}
+                                       | {chain, chain_event()}.
+
+-type conn_event()                    :: conn_init_event()
+                                       | conn_recv_data_event()
+                                       | conn_timeout_event()
+                                       | conn_close_event().
+
+-type conn_init_event()               :: #{event              => init}.
+
+-type conn_recv_data_event()          :: #{event              => recv_data,
+                                           data               => raw_msg()}.
+
+-type conn_timeout_event()            :: #{event              => timeout}.
+
+-type conn_close_event()              :: #{event              => close}.
+
+-type chain_event()                   :: chain_recv_block_event()
+                                       | chain_set_target_event()
+                                       | chain_notify_event().
+
+-type chain_recv_block_event()        :: #{event              => recv_block,
+                                           block              => block()}.
+
+-type chain_set_target_event()        :: #{event              => set_target}.
+
+-type chain_notify_event()            :: #{event              => notify,
+                                           job_info           => job_info()}.
+
+-type action()                        :: {send, raw_msg(), session()}
+                                       | {no_send, session()}
+                                       | {stop, session()}.
+
+-type block()                         :: #{block_hash         => block_hash(),
+                                           block_version      => block_version(),
+                                           block_target       => block_target()}.
+
+-type job_info()                      :: #{job_id             => job_id(),
+                                           block_hash         => block_hash(),
+                                           block_version      => block_version(),
+                                           block_target       => block_target(),
+                                           share_target       => share_target(),
+                                           desired_solve_time => desired_solve_time(),
+                                           max_solve_time     => max_solve_time()}.
+
+-type job_id()                        :: aestratum_job:id().
+
+-type block_hash()                    :: binary().
+
+-type block_version()                 :: pos_integer().
+
+-type block_target()                  :: aestratum_target:int_target().
+
 -record(state, {
-          phase,
-          timer,
-          extra_nonce,
-          accept_blocks = false,
-          share_target,
-          max_share_target,
-          share_target_diff_threshold,
-          desired_solve_time,
-          max_solve_time,
-          jobs,
-          submissions
+          phase                       :: phase(),
+          timer                       :: timer() | undefined,
+          extra_nonce                 :: extra_nonce() | undefined,
+          accept_blocks = false       :: accept_blocks(),
+          share_target                :: share_target() | undefined,
+          max_share_target            :: max_share_target() | undefined,
+          share_target_diff_threshold :: share_target_diff_threshold() | undefined,
+          desired_solve_time          :: desired_solve_time() | undefined,
+          max_solve_time              :: max_solve_time() | undefined,
+          jobs                        :: job_queue() | undefined
          }).
 
--opaque session() :: #state{}.
+-opaque session()                     :: #state{}.
 
 -define(HOST, application:get_env(aestratum, host, <<"pool.aeternity.com">>)).
 -define(PORT, application:get_env(aestratum, port, 9999)).
@@ -45,14 +125,17 @@
 
 %% API.
 
+-spec new() -> session().
 new() ->
     #state{phase = connected}.
 
+-spec handle_event(event(), session()) -> action().
 handle_event({conn, Event}, State) ->
     handle_conn_event(Event, State);
 handle_event({chain, Event}, State) ->
     handle_chain_event(Event, State).
 
+-spec close(session()) -> ok.
 close(#state{} = State) ->
     close_session(State),
     ok.
@@ -83,61 +166,81 @@ handle_chain_event(#{event := notify, job_info := JobInfo}, State) ->
 
 recv_msg(#{type := req, method := configure} = Req,
          #state{phase = connected} = State) ->
+    ?INFO("recv_configure_req, req: ~p", [Req]),
     send_configure_rsp(Req, State);
 recv_msg(#{type := req, method := subscribe} = Req,
          #state{phase = connected} = State) ->
+    ?INFO("recv_subscribe_req, req: ~p", [Req]),
     send_subscribe_rsp(Req, State);
 recv_msg(#{type := req, method := subscribe} = Req,
          #state{phase = configured} = State) ->
+    ?INFO("recv_subscribe_req, req: ~p", [Req]),
     send_subscribe_rsp(Req, State);
 recv_msg(#{type := req, method := authorize} = Req,
          #state{phase = subscribed} = State) ->
+    ?INFO("recv_authorize_req, req: ~p", [Req]),
     send_authorize_rsp(Req, State);
 %% Submit request is accepted only when the connection is in authorized phase
 %% and the share target is set (set_target notification was sent to the client).
 recv_msg(#{type := req, method := submit} = Req,
          #state{phase = authorized, share_target = ShareTarget} = State) when
       ShareTarget =/= undefined ->
+    ?INFO("recv_submit_req, req: ~p", [Req]),
     send_submit_rsp(Req, State);
 recv_msg(#{type := req, method := submit} = Req,
          #state{phase = authorized, share_target = undefined} = State) ->
+    ?ERROR("recv_submit_req, req: ~p", [Req]),
     send_unknown_error_rsp(Req, target_not_set, State);
 recv_msg(#{type := req, method := submit} = Req,
          #state{phase = subscribed} = State) ->
+    ?ERROR("recv_submit_req, reason: ~p, req: ~p", [unauthorized, Req]),
     send_unauthorized_worker_rsp(Req, null, State);
 recv_msg(#{type := req, method := Method} = Req,
          #state{phase = Phase} = State) when
       ((Method =:= authorize) or (Method =:= submit)) and
       ((Phase =:= connected) or (Phase =:= configured)) ->
+    ?ERROR("recv_req, reason: ~p, req: ~p", [not_subscribed, Req]),
     send_not_subscribed_rsp(Req, null, State);
 recv_msg(Msg, State) ->
+    ?ERROR("recv_msg, reason: ~p, msg: ~p", [unexpected_msg, Msg]),
     send_unknown_error_rsp(Msg, unexpected_msg, State).
 
 %% JSON-RPC error responses.
 
-recv_msg_error(parse_error, State) ->
+recv_msg_error(parse_error = Rsn, State) ->
+    ?ERROR("recv_msg_error, reason: ~p", [Rsn]),
     RspMap = #{type => rsp, method => undefined, id => null,
                reason => parse_error, data => null},
+    ?INFO("send_error_rsp, rsp: ~p", [RspMap]),
     {send, encode(RspMap), State};
-recv_msg_error({invalid_msg, MaybeId}, State) ->
+recv_msg_error({invalid_msg = Rsn, MaybeId}, State) ->
+    ?ERROR("recv_msg_error, reason: ~p, id: ~p", [Rsn, MaybeId]),
     RspMap = #{type => rsp, method => undefined,
                id => aestratum_jsonrpc:to_id(MaybeId),
                reason => invalid_msg, data => null},
+    ?INFO("send_error_rsp, rsp: ~p", [RspMap]),
     {send, encode(RspMap), State};
-recv_msg_error({invalid_method, MaybeId}, State) ->
+recv_msg_error({invalid_method = Rsn, MaybeId}, State) ->
+    ?ERROR("recv_msg_error, reason: ~p, id: ~p", [Rsn, MaybeId]),
     RspMap = #{type => rsp, method => undefined,
                id => aestratum_jsonrpc:to_id(MaybeId),
                reason => invalid_method, data => null},
+    ?INFO("send_error_rsp, rsp: ~p", [RspMap]),
     {send, encode(RspMap), State};
-recv_msg_error({invalid_param, Param, MaybeId}, State) ->
+recv_msg_error({invalid_param = Rsn, Param, MaybeId}, State) ->
+    ?ERROR("recv_msg_error, reason: ~p, param: ~p, id: ~p",
+           [Rsn, Param, MaybeId]),
     RspMap = #{type => rsp, method => undefined,
                id => aestratum_jsonrpc:to_id(MaybeId),
                reason => invalid_param, data => atom_to_binary(Param, utf8)},
+    ?INFO("send_error_rsp, rsp: ~p", [RspMap]),
     {send, encode(RspMap), State};
-recv_msg_error({internal_error, MaybeId}, State) ->
+recv_msg_error({internal_error = Rsn, MaybeId}, State) ->
+    ?ERROR("recv_msg_error, reason: ~p, id: ~p", [Rsn, MaybeId]),
     RspMap = #{type => rsp, method => undefined,
                id => aestratum_jsonrpc:to_id(MaybeId),
                reason => internal_error, data => null},
+    ?INFO("send_error_rsp, rsp: ~p", [RspMap]),
     {send, encode(RspMap), State}.
 
 %% Handle timeout.
@@ -146,7 +249,7 @@ handle_conn_timeout(#state{phase = Phase, timer = {_TRef, Phase}} = State) when
       (Phase =:= connected) or (Phase =:= configured) or (Phase =:= subscribed) ->
     %% The timer's phase is the same as the current phase, so the timeout
     %% applies and the connection to the client is closed.
-    %% TODO: reason, log
+    ?INFO("handle_conn_timeout, phase: ~p", [Phase]),
     {stop, close_session(State)};
 handle_conn_timeout(State) ->
     {no_send, State}.
@@ -179,14 +282,15 @@ send_submit_rsp(#{user := User, miner_nonce := MinerNonce, pow := Pow} = Req, St
 
 send_configure_rsp1(ok, #{id := Id}, #state{timer = Timer} = State) ->
     %% TODO: there are no configure params currently
-    cancel_timer(Timer),
+    maybe_cancel_timer(Timer),
     RspMap = #{type => rsp, method => configure, id => Id, result => []},
+    ?INFO("send_configure_rsp, rsp: ~p", [RspMap]),
     {send, encode(RspMap), State#state{phase = configured,
                                        timer = set_timer(configured)}}.
 %%send_configure_rsp1({error, Rsn}, ...
 
 send_subscribe_rsp1(ok, #{id := Id} = Req, #state{timer = Timer} = State) ->
-    cancel_timer(Timer),
+    maybe_cancel_timer(Timer),
     %% TODO: Session resumption not supported (yet).
     ExtraNonceNBytes = ?EXTRA_NONCE_NBYTES,
     case aestratum_extra_nonce_cache:get(ExtraNonceNBytes) of
@@ -195,6 +299,7 @@ send_subscribe_rsp1(ok, #{id := Id} = Req, #state{timer = Timer} = State) ->
             ExtraNonce1 = aestratum_nonce:to_hex(ExtraNonce),
             RspMap = #{type => rsp, method => subscribe, id => Id,
                        result => [SessionId1, ExtraNonce1]},
+            ?INFO("send_subscribe_rsp, rsp: ~p", [RspMap]),
             %% Set timer for authorize request.
             {send, encode(RspMap),
              State#state{phase = subscribed, timer = set_timer(subscribed),
@@ -207,7 +312,7 @@ send_subscribe_rsp1({error, Rsn}, Req, State) ->
 
 send_authorize_rsp1(ok, #{id := Id, user := User},
                     #state{timer = Timer} = State) ->
-    cancel_timer(Timer),
+    maybe_cancel_timer(Timer),
     aestratum_user_register:add(User, self()),
     RspMap = #{type => rsp, method => authorize, id => Id, result => true},
     %% After the authorization, the server is supposed to send an initial
@@ -216,6 +321,7 @@ send_authorize_rsp1(ok, #{id := Id, user := User},
     %% No need to set timer after authorization, there are no further expected
     %% requests within a time period. Submit requests do not require timeout.
     %% Job queue is initialized to make it ready to accept client sumbissions.
+    ?INFO("send_authorize_rsp, rsp: ~p", [RspMap]),
     {send, encode(RspMap),
      State#state{phase = authorized, timer = undefined,
                  jobs = aestratum_job_queue:new()}};
@@ -224,9 +330,11 @@ send_authorize_rsp1({error, user_and_password}, #{id := Id}, State) ->
                result => false},
     %% Timer is not cancelled, the client has a chance to send another
     %% authorize request.
+    ?INFO("send_authorize_rsp, rsp: ~p", [RspMap]),
     {send, encode(RspMap), State}.
 
-send_submit_rsp1({ok, Share, Job}, #{id := Id}, #state{jobs = Jobs} = State) ->
+send_submit_rsp1({ok, Share, Job}, #{id := Id, miner_nonce := MinerNonce, pow := Pow},
+                 #state{jobs = Jobs} = State) ->
     JobId = aestratum_job:id(Job),
     Job1 = aestratum_job:add_share(Share, Job),
     Jobs1 = aestratum_job_queue:replace(JobId, Job1, Jobs),
@@ -235,10 +343,11 @@ send_submit_rsp1({ok, Share, Job}, #{id := Id}, #state{jobs = Jobs} = State) ->
     BlockHash = aestratum_job:block_hash(Job),
     aestratum_reward:submit_share(User, ShareTarget, BlockHash),
     case aestratum_share:validity(Share) of
-        valid_block -> ok; %% TODO: submit to the chain
+        valid_block -> aestratum_chain:submit_solution(BlockHash, MinerNonce, Pow);
         valid_share -> ok
     end,
     RspMap = #{type => rsp, method => submit, id => Id, result => true},
+    ?INFO("send_submit_rsp, rsp: ~p", [RspMap]),
     {send, encode(RspMap), State#state{jobs = Jobs1}};
 send_submit_rsp1({error, Share, Job}, #{id := Id} = Req,
                  #state{jobs = Jobs} = State) when Job =/= undefined ->
@@ -260,6 +369,7 @@ send_submit_rsp1({error, Share, Job}, #{id := Id} = Req,
         max_solve_time_exceeded ->
             %% TODO: send unknow_error with data set instead?
             RspMap = #{type => rsp, method => submit, id => Id, result => false},
+            ?INFO("send_submit_rsp, rsp: ~p", [RspMap]),
             {send, encode(RspMap), State1}
     end;
 send_submit_rsp1({error, Share, undefined}, Req, State) ->
@@ -274,31 +384,37 @@ send_submit_rsp1({error, Share, undefined}, Req, State) ->
 send_not_subscribed_rsp(#{id := Id}, Data, State) ->
     RspMap = #{type => rsp, id => Id, reason => not_subscribed,
                data => error_data(Data)},
+    ?INFO("send_not_subscribed_rsp, rsp: ~p", [RspMap]),
     {send, encode(RspMap), State}.
 
 send_unauthorized_worker_rsp(#{id := Id}, Data, State) ->
     RspMap = #{type => rsp, id => Id, reason => unauthorized_worker,
                data => error_data(Data)},
+    ?INFO("send_unauthorized_worker_rsp, rsp: ~p", [RspMap]),
     {send, encode(RspMap), State}.
 
 send_low_difficulty_share_rsp(#{id := Id}, Data, State) ->
     RspMap = #{type => rsp, id => Id, reason => low_difficulty_share,
                data => error_data(Data)},
+    ?INFO("send_low_difficulty_share_rsp, rsp: ~p", [RspMap]),
     {send, encode(RspMap), State}.
 
 send_duplicate_share_rsp(#{id := Id}, Data, State) ->
     RspMap = #{type => rsp, id => Id, reason => duplicate_share,
                data => error_data(Data)},
+    ?INFO("send_duplicate_share_rsp, rsp: ~p", [RspMap]),
     {send, encode(RspMap), State}.
 
 send_job_not_found_rsp(#{id := Id}, Data, State) ->
     RspMap = #{type => rsp, id => Id, reason => job_not_found,
                data => error_data(Data)},
+    ?INFO("send_job_not_found_rsp, rsp: ~p", [RspMap]),
     {send, encode(RspMap), State}.
 
 send_unknown_error_rsp(#{id := Id}, Data, State) ->
     RspMap = #{type => rsp, id => Id, reason => unknown_error,
                data => error_data(Data)},
+    ?INFO("send_unknown_error_rsp, rsp: ~p", [RspMap]),
     {send, encode(RspMap), State}.
 
 error_data(null) ->
@@ -397,26 +513,31 @@ handle_chain_notify(#{job_id := JobId, block_hash := BlockHash,
 send_set_target_ntf(ShareTarget, State) ->
     NtfMap = #{type => ntf, method => set_target,
                target => aestratum_target:to_hex(ShareTarget)},
+    ?INFO("send_set_target_ntf, ntf: ~p", [NtfMap]),
     {send, encode(NtfMap), State}.
 
 send_notify_ntf(JobId, BlockHash, BlockVersion, EmptyQueue, #state{} = State) ->
     NtfMap = #{type => ntf, method => notify, job_id => JobId,
                block_hash => BlockHash, block_version => BlockVersion,
                empty_queue => EmptyQueue},
+    ?INFO("send_notify_ntf, ntf: ~p", [NtfMap]),
     {send, encode(NtfMap), State}.
 
 %% Helper functions.
 
 close_session(#state{phase = Phase, extra_nonce = ExtraNonce,
-                     timer = Timer} = State) ->
+                     timer = Timer} = State) when Phase =/= disconnected ->
     maybe_free_extra_nonce(ExtraNonce),
     maybe_cancel_timer(Timer),
     case Phase of
         authorized -> aestratum_user_register:del(self());
         _Other     -> ok
     end,
+    ?INFO("close_session", []),
     State#state{phase = disconnected, extra_nonce = undefined,
-                timer = undefined}.
+                timer = undefined};
+close_session(State) ->
+    State.
 
 maybe_free_extra_nonce(ExtraNonce) when ExtraNonce =/= undefined ->
     aestratum_extra_nonce_cache:free(ExtraNonce),
@@ -428,13 +549,10 @@ set_timer(Phase) ->
     TRef = erlang:send_after(?MSG_TIMEOUT, self(), {conn, #{event => timeout}}),
     {TRef, Phase}.
 
-maybe_cancel_timer({_TRef, _Phase} = Timer) ->
-    cancel_timer(Timer);
+maybe_cancel_timer({TRef, _Phase}) when is_reference(TRef) ->
+    erlang:cancel_timer(TRef);
 maybe_cancel_timer(undefined) ->
     ok.
-
-cancel_timer({TRef, _Phase}) when is_reference(TRef) ->
-    erlang:cancel_timer(TRef).
 
 validate_configure_req(#{params := []}, _State) ->
     ok.
