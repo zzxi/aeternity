@@ -22,6 +22,8 @@
          fraud_report_reward/1,
          state_gas_per_block/1,
          primop_base_gas/1,
+         protocol_beneficiary/0,
+         protocol_beneficiary_factor/0,
          add_network_id/1,
          add_network_id_last/1,
          get_network_id/0,
@@ -478,3 +480,11 @@ vm_gas_table() ->
        %%   }
        %%   ```
      }.
+
+
+protocol_beneficiary() ->
+    <<"beneficiary...">>. %% todo: pull from config? need to do that to manage another envs.
+                         %% what format is it here?
+
+protocol_beneficiary_factor() ->
+    1. %% 10%
