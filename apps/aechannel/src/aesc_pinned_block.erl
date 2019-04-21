@@ -13,6 +13,7 @@
         , serialize/1
         , deserialize/1
         , serialize_for_client/1
+        , hash/1
         ]).
 
 -define(KEYBLOCK,   1).
@@ -35,6 +36,11 @@ no_hash() -> ?NO_PINNED_BLOCK.
 block_hash(BH, Type) when Type =:= key;
                           Type =:= micro ->
     #pinned{hash = BH, type = Type}.
+
+-spec hash(hash()) -> top_block | {key|micro, aec_blocks:block_header_hash()}.
+hash(?NO_PINNED_BLOCK) -> top_block;
+hash(#pinned{hash = BH, type = Type}) ->
+    {Type, BH}.
 
 -spec serialize(hash()) -> binary().
 serialize(?NO_PINNED_BLOCK) -> ?BINARY_NO_PINNED_BLOCK;

@@ -200,14 +200,37 @@ from_pubkey(#channel_force_progress_tx{from_id = FromId}) ->
 
 -spec check(tx(), aec_trees:trees(), aetx_env:env()) -> {ok, aec_trees:trees()} | {error, term()}.
 check(#channel_force_progress_tx{payload       = Payload,
-                                 offchain_trees= OffChainTrees} = Tx, Trees, Env) ->
-    case aesc_utils:check_force_progress( Tx, Payload, OffChainTrees, Trees, Env) of
-        ok -> {ok, Trees};
-        Err -> Err
+                                 offchain_trees= OffChainTrees,
+                                 block_hash    = BH} = Tx, Trees, Env) ->
+    RunChecks =
+        fun() ->
+            case aesc_utils:check_force_progress( Tx, Payload, OffChainTrees, Trees, Env) of
+                ok -> {ok, Trees};
+                Err -> Err
+            end
+        end,
+    case aesc_pinned_block:hash(BH) of
+        top_block -> RunChecks();
+        {Type, BlockHash} ->
+            TopHeight = aetx_env:height(Env),
+            case aec_chain:get_header(BlockHash) of
+                {ok, Header} ->
+                    PinnedEnvChecks =
+                        [fun() ->
+                             check_pinned_height(aec_headers:height(Header),
+                                                 TopHeight)
+                         end],%TODO: add block type check
+                    case aeu_validation:run(PinnedEnvChecks) of
+                        ok -> RunChecks();
+                        {error, _} = Err -> Err
+                    end;
+                error -> {error, wrong_pinned_env}
+            end
     end.
 
 -spec process(tx(), aec_trees:trees(), aetx_env:env()) -> {ok, aec_trees:trees(), aetx_env:env()}.
-process(#channel_force_progress_tx{offchain_trees = OffChainTrees} = Tx, Trees, Env) ->
+process(#channel_force_progress_tx{offchain_trees = OffChainTrees,
+                                   block_hash = _PinnedBlock} = Tx, Trees, Env) ->
     Height = aetx_env:height(Env),
     {value, STx} = aetx_env:signed_tx(Env),
 
@@ -410,4 +433,21 @@ valid_at_protocol(Protocol, #channel_force_progress_tx{payload = Payload} = Tx) 
     CorrectPayloadVsn = aesc_utils:is_payload_valid_at_protocol(Protocol,
                                                                 Payload),
     CorrectTxVsn andalso CorrectPayloadVsn.
+
+pinned_trees_and_env(PB, Trees, Env) ->
+    case aesc_pinned_block:hash(PB) of
+        top_block -> {Trees, Env};
+        {_Type, BlockHash} ->
+            {PinnedEnv, PinnedTrees} =
+                aetx_env:tx_env_and_trees_from_hash(aetx_transaction, BlockHash),
+            {PinnedTrees, PinnedEnv}
+    end.
+
+% to match expectations of garbage collected blocks
+% that do not have this block
+check_pinned_height(PinnedHeight, TopHeight) ->
+    case PinnedHeight >= TopHeight - 20 of
+        true -> ok;
+        false -> {error, wrong_pinned_env}
+    end.
 

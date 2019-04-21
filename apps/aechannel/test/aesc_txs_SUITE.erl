@@ -191,11 +191,11 @@
 
 % fork related tests
 -export([ fp_sophia_versions/1
-        , close_solo_payload_with_pinnned_env/1
-        , slash_payload_with_pinnned_env/1
-        , snapshot_solo_payload_with_pinnned_env/1
-        , fp_payload_with_pinnned_env/1
-        , fp_pinnned_env/1
+        , close_solo_payload_with_pinned_env/1
+        , slash_payload_with_pinned_env/1
+        , snapshot_solo_payload_with_pinned_env/1
+        , fp_payload_with_pinned_env/1
+        , fp_pinned_env/1
         ]).
 
 -include_lib("common_test/include/ct.hrl").
@@ -388,11 +388,11 @@ groups() ->
       ]},
      {fork_awareness, [sequence],
       [ fp_sophia_versions
-      , close_solo_payload_with_pinnned_env
-      , slash_payload_with_pinnned_env
-      , snapshot_solo_payload_with_pinnned_env
-      , fp_payload_with_pinnned_env
-      , fp_pinnned_env
+      , close_solo_payload_with_pinned_env
+      , slash_payload_with_pinned_env
+      , snapshot_solo_payload_with_pinned_env
+      , fp_payload_with_pinned_env
+      , fp_pinned_env
       ]}
     ].
 
@@ -5297,7 +5297,7 @@ fp_sophia_versions(Cfg) ->
                               {Vm, CodeSVsn, Error} <- ForkChecks],
     ok.
 
-fp_pinnned_env(Cfg) ->
+fp_pinned_env(Cfg) ->
     MinervaHeight = 1234,
     FortunaHeight = 12345,
 
@@ -5315,12 +5315,27 @@ fp_pinnned_env(Cfg) ->
     true = MinervaHeight < ?FORTUNA_FORK_HEIGHT,
     true = FortunaHeight >= ?FORTUNA_FORK_HEIGHT,
 
-    BlockHash = <<42:?BLOCK_HEADER_HASH_BYTES/unit:8>>,
+    PrevKBlockHash = <<41:?BLOCK_HEADER_HASH_BYTES/unit:8>>,
+    KBlockHash = <<42:?BLOCK_HEADER_HASH_BYTES/unit:8>>,
+    MBlockHash = <<43:?BLOCK_HEADER_HASH_BYTES/unit:8>>,
 
     IStartAmt = 200000 * aec_test_utils:min_gas_price(),
     RStartAmt = 200000 * aec_test_utils:min_gas_price(),
+
+    MeckChain =
+        fun(CurrentHeight) ->
+            meck:expect(aec_chain, get_header,
+                        fun(BHash) when BHash =:= KBlockHash ->
+                            {ok, fake_header(key, PrevKBlockHash,
+                                             PrevKBlockHash,
+                                             CurrentHeight - 5)};
+                           (BHash) when BHash =:= MBlockHash ->
+                            {ok, fake_header(micro, KBlockHash, KBlockHash,
+                                             CurrentHeight - 5)}
+                        end)
+        end,
     FP =
-        fun(Owner, Forcer, BlockType) ->
+        fun(Owner, Forcer, {BlockHash, BlockType}) ->
             Round = 42,
             run(#{cfg => Cfg, initiator_amount => IStartAmt,
                               responder_amount => RStartAmt,
@@ -5334,24 +5349,33 @@ fp_pinnned_env(Cfg) ->
 
                 %% using this new format with the minerva height will fail
                 set_prop(height, MinervaHeight),
+                fun(P) ->
+                    MeckChain(MinervaHeight),
+                    P
+                end,
                 negative_force_progress_sequence(Round, Forcer, invalid_at_height),
                 AssertFPVersion(2), %% assert vsn =2
 
                 %% same poi and payload, force progress with the new serialization
                 %% will succeed
                 set_prop(height, FortunaHeight),
+                fun(P) ->
+                    MeckChain(FortunaHeight),
+                    P
+                end,
                 force_progress_sequence(Round, Forcer),
                 AssertFPVersion(2)
                ])
         end,
-    BlockTypes = [key, micro],
-    [FP(Owner, Forcer, BlockType) || Owner     <- ?ROLES,
-                                     Forcer    <- ?ROLES,
-                                     BlockType <- BlockTypes],
+    Blocks = [{KBlockHash, key},
+              {MBlockHash, micro}],
+    [FP(Owner, Forcer, Block) || Owner     <- ?ROLES,
+                                 Forcer    <- ?ROLES,
+                                 Block     <- Blocks],
     ok.
 
-close_solo_payload_with_pinnned_env(Cfg) ->
-    generic_payload_with_pinnned_env_(Cfg,
+close_solo_payload_with_pinned_env(Cfg) ->
+    generic_payload_with_pinned_env_(Cfg,
         fun(Round, Closer, ErrMsg) ->
             fun(Props) ->
                 run(Props,
@@ -5370,8 +5394,8 @@ close_solo_payload_with_pinnned_env(Cfg) ->
             end
         end).
 
-slash_payload_with_pinnned_env(Cfg) ->
-    generic_payload_with_pinnned_env_(Cfg,
+slash_payload_with_pinned_env(Cfg) ->
+    generic_payload_with_pinned_env_(Cfg,
         fun(Round, Closer, ErrMsg) ->
             CloseRound = 2,
             true = CloseRound < Round,
@@ -5399,8 +5423,8 @@ slash_payload_with_pinnned_env(Cfg) ->
             end
         end).
 
-snapshot_solo_payload_with_pinnned_env(Cfg) ->
-    generic_payload_with_pinnned_env_(Cfg,
+snapshot_solo_payload_with_pinned_env(Cfg) ->
+    generic_payload_with_pinned_env_(Cfg,
         fun(Round, Snapshotter, ErrMsg) ->
             fun(Props) ->
                 run(Props,
@@ -5418,12 +5442,12 @@ snapshot_solo_payload_with_pinnned_env(Cfg) ->
             end
         end).
 
-fp_payload_with_pinnned_env(Cfg) ->
-    generic_payload_with_pinnned_env_(Cfg,
+fp_payload_with_pinned_env(Cfg) ->
+    generic_payload_with_pinned_env_(Cfg,
           fun negative_force_progress_sequence/3,
           fun force_progress_sequence/2).
 
-generic_payload_with_pinnned_env_(Cfg, Negative, Positive) ->
+generic_payload_with_pinned_env_(Cfg, Negative, Positive) ->
     MinervaHeight = 1234,
     FortunaHeight = 12345,
 
@@ -5488,3 +5512,31 @@ address_encode(Binary) ->
     <<"#", HexStr/binary>>.
 
 quote(Bin) -> <<$", Bin/binary, $">>.
+
+
+fake_header(Type, PrevHash, PrevKey, Height) ->
+    BogusHash = <<12:?BLOCK_HEADER_HASH_BYTES/unit:8>>,
+    case Type of
+        key ->
+            aec_headers:new_key_header(Height,
+                                       PrevHash,  % prev hash
+                                       PrevKey,   % prev key hash
+                                       BogusHash, % root hash
+                                       BogusHash, % miner
+                                       BogusHash, % beneficiary
+                                       1234,      % target
+                                       no_value,  % pow
+                                       1234,      % nonce
+                                       1234,      % time
+                                       aec_hard_forks:protocol_effective_at_height(0)); %vsn
+        micro ->
+            aec_headers:new_micro_header(Height,
+                                         PrevHash,  %prev hash
+                                         PrevKey,   % prev key hash
+                                         BogusHash, % root hash
+                                         1234,      % time
+                                         BogusHash, % tx hash
+                                         <<>>,      % pof hash
+                                         aec_hard_forks:protocol_effective_at_height(0)) %vsn
+    end.
+
