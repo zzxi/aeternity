@@ -219,7 +219,11 @@ check(#channel_force_progress_tx{payload       = Payload,
                         [fun() ->
                              check_pinned_height(aec_headers:height(Header),
                                                  TopHeight)
-                         end],%TODO: add block type check
+                         end,
+                         fun() ->
+                             check_pinned_type(aec_headers:type(Header),
+                                                 Type)
+                         end],
                     case aeu_validation:run(PinnedEnvChecks) of
                         ok -> RunChecks();
                         {error, _} = Err -> Err
@@ -449,5 +453,11 @@ check_pinned_height(PinnedHeight, TopHeight) ->
     case PinnedHeight >= TopHeight - 20 of
         true -> ok;
         false -> {error, wrong_pinned_env}
+    end.
+
+check_pinned_type(ActualType, ExpectedType) ->
+    case ActualType =:= ExpectedType of
+        true -> ok;
+        false -> {error, wrong_pinned_type}
     end.
 

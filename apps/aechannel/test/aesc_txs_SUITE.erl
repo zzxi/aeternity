@@ -154,6 +154,11 @@
          fp_use_onchain_contract/1
         ]).
 
+% negative force progress pinned env
+-export([fp_pinned_block_not_found/1,
+         fp_pinned_block_too_old/1,
+         fp_pinned_block_different_type/1]).
+
 % negative force progress
 -export([fp_closed_channel/1,
          fp_not_participant/1,
@@ -243,6 +248,7 @@ groups() ->
        {group, snapshot_solo_negative},
        {group, force_progress},
        {group, force_progress_negative},
+       {group, force_progress_pinned_env_negative},
        {group, fork_awareness}
       ]
      },
@@ -386,6 +392,11 @@ groups() ->
        fp_oracle_extend,
        fp_oracle_respond
       ]},
+     {force_progress_pinned_env_negative, [sequence],
+      [ fp_pinned_block_not_found,
+        fp_pinned_block_too_old,
+        fp_pinned_block_different_type
+      ]},
      {fork_awareness, [sequence],
       [ fp_sophia_versions
       , close_solo_payload_with_pinned_env
@@ -405,7 +416,8 @@ init_per_suite(Config) ->
 end_per_suite(_Config) ->
     ok.
 
-init_per_group(fork_awareness, Config) ->
+init_per_group(FPGroup, Config) when FPGroup =:= fork_awareness;
+                                     FPGroup =:= force_progress_pinned_env_negative ->
     meck:expect(aec_hard_forks, protocol_effective_at_height,
                 fun(V) when V < ?MINERVA_FORK_HEIGHT -> ?ROMA_PROTOCOL_VSN;
                    (V) when V < ?FORTUNA_FORK_HEIGHT -> ?MINERVA_PROTOCOL_VSN;
@@ -415,7 +427,8 @@ init_per_group(fork_awareness, Config) ->
 init_per_group(_Group, Config) ->
     Config.
 
-end_per_group(fork_awareness, _Config) ->
+end_per_group(FPGroup, _Config) when FPGroup =:= fork_awareness;
+                                     FPGroup =:= force_progress_pinned_env_negative ->
     meck:unload(aec_hard_forks),
     ok;
 end_per_group(_Group, _Config) ->
@@ -5372,6 +5385,7 @@ fp_pinned_env(Cfg) ->
     [FP(Owner, Forcer, Block) || Owner     <- ?ROLES,
                                  Forcer    <- ?ROLES,
                                  Block     <- Blocks],
+    meck:unload(aec_chain),
     ok.
 
 close_solo_payload_with_pinned_env(Cfg) ->
@@ -5539,4 +5553,96 @@ fake_header(Type, PrevHash, PrevKey, Height) ->
                                          <<>>,      % pof hash
                                          aec_hard_forks:protocol_effective_at_height(0)) %vsn
     end.
+
+fp_pinned_block_not_found(Cfg) ->
+    UnknownBlockHash = <<41:?BLOCK_HEADER_HASH_BYTES/unit:8>>,
+    MeckChain =
+        fun(_CurrentHeight) ->
+            meck:expect(aec_chain, get_header,
+                        fun(_) ->
+                            error
+                        end)
+        end,
+    Blocks = [{UnknownBlockHash, key},
+              {UnknownBlockHash, micro}],
+    fp_pinned_block_generic(Cfg, MeckChain, Blocks, wrong_pinned_env).
+
+fp_pinned_block_too_old(Cfg) ->
+    PrevKBlockHash = <<41:?BLOCK_HEADER_HASH_BYTES/unit:8>>,
+    KBlockHash = <<42:?BLOCK_HEADER_HASH_BYTES/unit:8>>,
+    MBlockHash = <<43:?BLOCK_HEADER_HASH_BYTES/unit:8>>,
+    HeightDelta = 30,
+    MeckChain =
+        fun(CurrentHeight) ->
+            meck:expect(aec_chain, get_header,
+                        fun(BHash) when BHash =:= KBlockHash ->
+                            {ok, fake_header(key, PrevKBlockHash,
+                                             PrevKBlockHash,
+                                             CurrentHeight - HeightDelta)};
+                           (BHash) when BHash =:= MBlockHash ->
+                            {ok, fake_header(micro, KBlockHash, KBlockHash,
+                                             CurrentHeight - HeightDelta)}
+                        end)
+        end,
+    Blocks = [{KBlockHash, key},
+              {MBlockHash, micro}],
+    fp_pinned_block_generic(Cfg, MeckChain, Blocks, wrong_pinned_env).
+
+
+fp_pinned_block_different_type(Cfg) ->
+    PrevKBlockHash = <<41:?BLOCK_HEADER_HASH_BYTES/unit:8>>,
+    KBlockHash = <<42:?BLOCK_HEADER_HASH_BYTES/unit:8>>,
+    MBlockHash = <<43:?BLOCK_HEADER_HASH_BYTES/unit:8>>,
+    HeightDelta = 10,
+    MeckChain =
+        fun(CurrentHeight) ->
+            meck:expect(aec_chain, get_header,
+                        fun(BHash) when BHash =:= KBlockHash ->
+                            {ok, fake_header(key, PrevKBlockHash,
+                                             PrevKBlockHash,
+                                             CurrentHeight - HeightDelta)};
+                           (BHash) when BHash =:= MBlockHash ->
+                            {ok, fake_header(micro, KBlockHash, KBlockHash,
+                                             CurrentHeight - HeightDelta)}
+                        end)
+        end,
+    % use wrong types of blocks
+    Blocks = [{KBlockHash, micro},
+              {MBlockHash, key}],
+    fp_pinned_block_generic(Cfg, MeckChain, Blocks, wrong_pinned_type).
+
+
+fp_pinned_block_generic(Cfg, MeckChain, Blocks, ErrMsg) ->
+    IStartAmt = 200000 * aec_test_utils:min_gas_price(),
+    RStartAmt = 200000 * aec_test_utils:min_gas_price(),
+
+    Height = 12345,
+    FP =
+        fun(Owner, Forcer, {BlockHash, BlockType}) ->
+            Round = 42,
+            run(#{cfg => Cfg, initiator_amount => IStartAmt,
+                              responder_amount => RStartAmt,
+                 channel_reserve => 1},
+               [positive(fun create_channel_/2),
+                create_contract_poi_and_payload(Round - 1, 5, Owner),
+                %% adding the optional pinned_block will produce vsn=2 force
+                %% progress transactions
+                set_prop(pinned_block, aesc_pinned_block:block_hash(BlockHash,
+                                                                    BlockType)),
+
+                %% using this new format with the minerva height will fail
+                set_prop(height, Height),
+                fun(P) ->
+                    MeckChain(Height),
+                    P
+                end,
+                negative_force_progress_sequence(Round, Forcer,
+                                                 ErrMsg)
+               ])
+        end,
+    [FP(Owner, Forcer, Block) || Owner     <- ?ROLES,
+                                 Forcer    <- ?ROLES,
+                                 Block     <- Blocks],
+    meck:unload(aec_chain),
+    ok.
 
