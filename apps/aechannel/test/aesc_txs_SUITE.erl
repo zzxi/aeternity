@@ -418,17 +418,20 @@ end_per_suite(_Config) ->
 
 init_per_group(FPGroup, Config) when FPGroup =:= fork_awareness;
                                      FPGroup =:= force_progress_pinned_env_negative ->
+
     meck:expect(aec_hard_forks, protocol_effective_at_height,
                 fun(V) when V < ?MINERVA_FORK_HEIGHT -> ?ROMA_PROTOCOL_VSN;
                    (V) when V < ?FORTUNA_FORK_HEIGHT -> ?MINERVA_PROTOCOL_VSN;
                    (_)                               -> ?FORTUNA_PROTOCOL_VSN
                 end),
+    meck:new(aec_chain, [passthrough]),
     Config;
 init_per_group(_Group, Config) ->
     Config.
 
 end_per_group(FPGroup, _Config) when FPGroup =:= fork_awareness;
                                      FPGroup =:= force_progress_pinned_env_negative ->
+    meck:unload(aec_chain),
     meck:unload(aec_hard_forks),
     ok;
 end_per_group(_Group, _Config) ->
@@ -5335,7 +5338,7 @@ fp_pinned_env(Cfg) ->
     IStartAmt = 200000 * aec_test_utils:min_gas_price(),
     RStartAmt = 200000 * aec_test_utils:min_gas_price(),
 
-    MeckChain =
+    MeckGetHeader =
         fun(CurrentHeight) ->
             meck:expect(aec_chain, get_header,
                         fun(BHash) when BHash =:= KBlockHash ->
@@ -5345,6 +5348,13 @@ fp_pinned_env(Cfg) ->
                            (BHash) when BHash =:= MBlockHash ->
                             {ok, fake_header(micro, KBlockHash, KBlockHash,
                                              CurrentHeight - 5)}
+                        end)
+        end,
+    MeckGetTrees =
+        fun(Hash, Trees) ->
+            meck:expect(aec_chain, get_block_state,
+                        fun(BHash) when BHash =:= Hash ->
+                            {ok, Trees}
                         end)
         end,
     FP =
@@ -5362,8 +5372,10 @@ fp_pinned_env(Cfg) ->
 
                 %% using this new format with the minerva height will fail
                 set_prop(height, MinervaHeight),
-                fun(P) ->
-                    MeckChain(MinervaHeight),
+                fun(#{state := S} = P) ->
+                    Trees = aesc_test_utils:trees(S),
+                    MeckGetHeader(MinervaHeight),
+                    MeckGetTrees(BlockHash, Trees),
                     P
                 end,
                 negative_force_progress_sequence(Round, Forcer, invalid_at_height),
@@ -5372,8 +5384,10 @@ fp_pinned_env(Cfg) ->
                 %% same poi and payload, force progress with the new serialization
                 %% will succeed
                 set_prop(height, FortunaHeight),
-                fun(P) ->
-                    MeckChain(FortunaHeight),
+                fun(#{state := S} = P) ->
+                    Trees = aesc_test_utils:trees(S),
+                    MeckGetHeader(FortunaHeight),
+                    MeckGetTrees(BlockHash, Trees),
                     P
                 end,
                 force_progress_sequence(Round, Forcer),
@@ -5385,7 +5399,6 @@ fp_pinned_env(Cfg) ->
     [FP(Owner, Forcer, Block) || Owner     <- ?ROLES,
                                  Forcer    <- ?ROLES,
                                  Block     <- Blocks],
-    meck:unload(aec_chain),
     ok.
 
 close_solo_payload_with_pinned_env(Cfg) ->
@@ -5538,7 +5551,7 @@ fake_header(Type, PrevHash, PrevKey, Height) ->
                                        BogusHash, % root hash
                                        BogusHash, % miner
                                        BogusHash, % beneficiary
-                                       1234,      % target
+                                       16#1b0404cb, % target
                                        no_value,  % pow
                                        1234,      % nonce
                                        1234,      % time
@@ -5643,6 +5656,5 @@ fp_pinned_block_generic(Cfg, MeckChain, Blocks, ErrMsg) ->
     [FP(Owner, Forcer, Block) || Owner     <- ?ROLES,
                                  Forcer    <- ?ROLES,
                                  Block     <- Blocks],
-    meck:unload(aec_chain),
     ok.
 

@@ -22,7 +22,7 @@
          check_force_progress/5,
          process_solo_close/9,
          process_slash/9,
-         process_force_progress/6,
+         process_force_progress/8,
          process_solo_snapshot/7
         ]).
 
@@ -617,7 +617,8 @@ process_solo_close_slash(ChannelPubKey, FromPubKey, Nonce, Fee,
         end,
     _Trees2 = set_channel(Channel1, Trees1).
 
-process_force_progress(Tx, OffChainTrees, TxHash, Height, Trees, Env) ->
+process_force_progress(Tx, OffChainTrees, TxHash, Height, PinnedTrees,
+                       PinnedEnv, TopTrees, TopEnv) ->
     ?TEST_LOG("process_force_progress begin", []),
     ChannelPubKey = aesc_force_progress_tx:channel_pubkey(Tx),
     FromPubKey = aesc_force_progress_tx:origin(Tx),
@@ -627,7 +628,7 @@ process_force_progress(Tx, OffChainTrees, TxHash, Height, Trees, Env) ->
     NextRound = aesc_force_progress_tx:round(Tx),
     ?TEST_LOG("Next channel round will be ~p", [NextRound]),
     ExpectedHash = aesc_force_progress_tx:state_hash(Tx),
-    {ok, Channel} = get_channel(ChannelPubKey, Trees),
+    {ok, Channel} = get_channel(ChannelPubKey, TopTrees),
     {ContractPubkey, Caller} = aesc_offchain_update:extract_call(Update),
     %% use in gas payment
     Reserve = aesc_channels:channel_reserve(Channel),
@@ -635,7 +636,7 @@ process_force_progress(Tx, OffChainTrees, TxHash, Height, Trees, Env) ->
     NewOffChainTrees =
         try aesc_offchain_update:apply_on_trees(Update,
                                                 PrunedOffChainTrees,
-                                                Trees, Env,
+                                                PinnedTrees, PinnedEnv,
                                                 NextRound, Reserve)
         catch error:{off_chain_update_error, _} ->
           {_Amount, GasPrice, GasLimit} = aesc_offchain_update:extract_amounts(Update),
@@ -666,10 +667,10 @@ process_force_progress(Tx, OffChainTrees, TxHash, Height, Trees, Env) ->
 
 
     % consume gas from sender
-    Trees1 = consume_gas_and_fee(Call, Fee, FromPubKey, Nonce, Trees),
+    Trees1 = consume_gas_and_fee(Call, Fee, FromPubKey, Nonce, TopTrees),
 
     % add a receipt call in the calls state tree
-    Trees2 = add_call(Call, TxHash, Trees1, Env),
+    Trees2 = add_call(Call, TxHash, Trees1, TopEnv),
 
     ?TEST_LOG("Expected hash ~p", [ExpectedHash]),
     ?TEST_LOG("Computed hash ~p", [ComputedHash]),
@@ -701,7 +702,7 @@ process_force_progress(Tx, OffChainTrees, TxHash, Height, Trees, Env) ->
                 ?TEST_LOG("Expected and computed values DO NOT MATCH. Channel object is NOT being updated", []),
                 Trees2
         end,
-    add_event(Trees3, ChannelPubKey, Env).
+    add_event(Trees3, ChannelPubKey, TopEnv).
 
 
 get_vals(List) ->
