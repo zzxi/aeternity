@@ -75,6 +75,7 @@
         , bits_diff/4
         , address/2
         , balance/2
+        , balance_other/3
         , origin/2
         , caller/2
         , gasprice/2
@@ -110,6 +111,7 @@
         , sha3/1
         , sha256/1
         , blake2b/1
+        , setelement/5
         , dummyarg/8
         , dummyarg/9
         , abort/2
@@ -137,10 +139,10 @@ returnr(Arg0, EngineState) ->
 
 
 call(Arg0, EngineState) ->
-    Signature = aefa_fate:get_function_signature(Arg0, EngineState),
-    {ok, ES2} = aefa_fate:check_signature_and_bind_args(Signature, EngineState),
-    ES3 = aefa_fate:push_return_address(ES2),
-    {jump, 0,  aefa_fate:set_current_function(Arg0, ES3)}.
+    ES1 = aefa_fate:push_return_address(EngineState),
+    Signature = aefa_fate:get_function_signature(Arg0, ES1),
+    {ok, ES2} = aefa_fate:check_signature_and_bind_args(Signature, ES1),
+    {jump, 0,  aefa_fate:set_current_function(Arg0, ES2)}.
 
 call_r(Arg0, Arg1, EngineState) ->
     ES1 = aefa_fate:push_return_address(EngineState),
@@ -178,14 +180,14 @@ jumpif(Arg0, Arg1, EngineState) ->
 switch(Arg0, Arg1, Arg2, EngineState) ->
     {Value, ES1} = get_op_arg(Arg0, EngineState),
     if ?IS_FATE_VARIANT(Value) ->
-            ?FATE_VARIANT(Size, Tag, _T) = Value,
-            if Size =:= 2 ->
+            ?FATE_VARIANT(Arities, Tag, _T) = Value,
+            if length(Arities) =:= 2 ->
+                    %% Tag can only be 0 or 1 or the variant is broken.
                     case Tag of
                         0 -> {jump, Arg1, ES1};
-                        1 -> {jump, Arg2, ES1};
-                        _ -> aefa_fate:abort({bad_variant_tag, Tag, Size}, ES1)
+                        1 -> {jump, Arg2, ES1}
                     end;
-               true -> aefa_fate:abort({bad_variant_size, Size}, ES1)
+               true -> aefa_fate:abort({bad_variant_size, length(Arities)}, ES1)
             end;
        true -> aefa_fate:abort({value_does_not_match_type,Value, variant}, ES1)
     end.
@@ -193,15 +195,15 @@ switch(Arg0, Arg1, Arg2, EngineState) ->
 switch(Arg0, Arg1, Arg2, Arg3, EngineState) ->
     {Value, ES1} = get_op_arg(Arg0, EngineState),
     if ?IS_FATE_VARIANT(Value) ->
-            ?FATE_VARIANT(Size, Tag, _T) = Value,
-            if Size =:= 3 ->
+            ?FATE_VARIANT(Arities, Tag, _T) = Value,
+            if length(Arities) =:= 3 ->
+                    %% Tag can only be 0, 1 or 2 or the variant is broken.
                     case Tag of
                         0 -> {jump, Arg1, ES1};
                         1 -> {jump, Arg2, ES1};
-                        2 -> {jump, Arg3, ES1};
-                        _ -> aefa_fate:abort({bad_variant_tag, Tag, Size}, ES1)
+                        2 -> {jump, Arg3, ES1}
                     end;
-               true -> aefa_fate:abort({bad_variant_size, Size}, ES1)
+               true -> aefa_fate:abort({bad_variant_size, length(Arities)}, ES1)
             end;
        true -> aefa_fate:abort({value_does_not_match_type,Value, variant}, ES1)
     end.
@@ -210,11 +212,11 @@ switch(Arg0, Arg1, EngineState) ->
     N = length(Arg1),
     {Value, ES1} = get_op_arg(Arg0, EngineState),
     if ?IS_FATE_VARIANT(Value) ->
-            ?FATE_VARIANT(Size, Tag, _T) = Value,
-            if Size =:= N ->
+            ?FATE_VARIANT(Arities, Tag, _T) = Value,
+            if length(Arities) =:= N ->
                     BB = lists:nth(Tag + 1, Arg1),
                     {jump, BB, ES1};
-               true -> aefa_fate:abort({bad_variant_size, Size}, ES1)
+               true -> aefa_fate:abort({bad_variant_tag, Tag}, ES1)
             end;
        true -> aefa_fate:abort({value_does_not_match_type, Value, variant}, ES1)
     end.
@@ -322,8 +324,50 @@ tuple(Arg0, EngineState) ->
        true -> aefa_fate:abort({invalid_tuple_size, Arg0}, EngineState)
     end.
 
-element_op(Arg0, Arg1, Arg2, EngineState) ->
-    tuple_element(Arg0, Arg1, Arg2, EngineState).
+make_tuple(Size, ES) ->
+    {Elements, ES2} = aefa_fate:pop_n(Size, ES),
+    Tuple = list_to_tuple(Elements),
+    FateTuple = aeb_fate_data:make_tuple(Tuple),
+    aefa_fate:push(FateTuple, ES2).
+
+
+element_op(To, Which, TupleArg, ES) ->
+    {Index, ES1} = get_op_arg(Which, ES),
+    {FateTuple, ES2} = get_op_arg(TupleArg, ES1),
+    case aefa_fate:check_type(integer, Index)
+        andalso (Index >= 0)
+        andalso ?IS_FATE_TUPLE(FateTuple) of
+        false -> aefa_fate:abort({bad_arguments_to_element, Index, FateTuple}, ES);
+        true ->
+            ?FATE_TUPLE(Tuple) = FateTuple,
+            case size(Tuple) > Index of
+                true ->
+                    V = element(Index+1, Tuple),
+                    write(To, V, ES2);
+                false ->
+                    aefa_fate:abort({element_index_out_of_bounds, Index}, ES)
+            end
+    end.
+
+setelement(Arg0, Arg1, Arg2, Arg3, EngineState) ->
+    {Index, ES1} = get_op_arg(Arg1, EngineState),
+    {FateTuple, ES2} = get_op_arg(Arg2, ES1),
+    {Element, ES3} = get_op_arg(Arg3, ES2),
+    case aefa_fate:check_type(integer, Index)
+        andalso (Index >= 0)
+        andalso ?IS_FATE_TUPLE(FateTuple) of
+        false -> aefa_fate:abort({bad_arguments_to_setelement, Index, FateTuple}, ES3);
+        true ->
+            ?FATE_TUPLE(Tuple) = FateTuple,
+            case size(Tuple) > Index of
+                true ->
+                    NewT = erlang:setelement(Index+1, Tuple, Element),
+                    write(Arg0, NewT, ES3);
+                false ->
+                    aefa_fate:abort({element_index_out_of_bounds, Index}, ES3)
+            end
+    end.
+
 
 %% ------------------------------------------------------
 %% Map instructions
@@ -399,7 +443,8 @@ int_to_addr(Arg0, Arg1, EngineState) ->
 %% ------------------------------------------------------
 %% Variant instructions
 %% ------------------------------------------------------
-%% A Variant type has a Size (number of different tags).
+%% A Variant type has a list of arities.
+%%  (the arity of each tag).
 %% A Variant also has a tag.
 %% A Variant has a tuple of values which size and types
 %%   are decided by the tag.
@@ -411,10 +456,10 @@ int_to_addr(Arg0, Arg1, EngineState) ->
 %% variants of size 2, 3 and N.
 
 variant(Arg0, Arg1, Arg2, Arg3, EngineState) ->
-    {Size, ES1} = get_op_arg(Arg1, EngineState),
+    {Arities, ES1} = get_op_arg(Arg1, EngineState),
     {Tag, ES2} = get_op_arg(Arg2, ES1),
     {N, ES3} = get_op_arg(Arg3, ES2),
-    {Result, ES4} = make_variant(Size, Tag, N, ES3),
+    {Result, ES4} = make_variant(Arities, Tag, N, ES3),
     write(Arg0, Result, ES4).
 
 variant_test(Arg0, Arg1, Arg2, EngineState) ->
@@ -491,31 +536,59 @@ bits_and(Arg0, Arg1, Arg2, EngineState) ->
 bits_diff(Arg0, Arg1, Arg2, EngineState) ->
     bin_op(bits_difference, {Arg0, Arg1, Arg2}, EngineState).
 
-address(_Arg0, _EngineState) -> exit({error, op_not_implemented_yet}).
+address(Arg0, EngineState) ->
+    Address = ?FATE_ADDRESS(_) = maps:get(current_contract, EngineState),
+    write(Arg0, Address, EngineState).
 
-balance(_Arg0, _EngineState) -> exit({error, op_not_implemented_yet}).
+balance(Arg0, #{ chain_api := API} = EngineState) ->
+    ?FATE_ADDRESS(Pubkey) = maps:get(current_contract, EngineState),
+    {ok, Balance, API1} = aefa_chain_api:account_balance(Pubkey, API),
+    write(Arg0, Balance, EngineState#{chain_api => API1}).
 
-origin(_Arg0, _EngineState) -> exit({error, op_not_implemented_yet}).
+balance_other(Arg0, Arg1, #{ chain_api := API} = ES) ->
+    case get_op_arg(Arg1, ES) of
+        {?FATE_ADDRESS(Pubkey), ES1} ->
+            case aefa_chain_api:account_balance(Pubkey, API) of
+                {ok, Balance, API1} ->
+                    write(Arg0, Balance, ES1#{chain_api => API1});
+                error ->
+                    %% Unknown accounts have balance 0
+                    write(Arg0, aeb_fate_data:make_integer(0), ES)
+            end;
+        {Value, ES1} ->
+            aefa_fate:abort({value_does_not_match_type, Value, address}, ES1)
+    end.
 
-caller(_Arg0, _EngineState) -> exit({error, op_not_implemented_yet}).
+origin(Arg0, #{ chain_api := API } = EngineState) ->
+    write(Arg0, aefa_chain_api:origin(API), EngineState).
 
-gasprice(_Arg0, _EngineState) -> exit({error, op_not_implemented_yet}).
+caller(Arg0, #{ caller := ?FATE_ADDRESS(_) = Address } = EngineState) ->
+    write(Arg0, Address, EngineState).
+
+gasprice(Arg0, #{ chain_api := API } = EngineState) ->
+    write(Arg0, aefa_chain_api:gas_price(API), EngineState).
 
 blockhash(_Arg0, _EngineState) -> exit({error, op_not_implemented_yet}).
 
-beneficiary(_Arg0, _EngineState) -> exit({error, op_not_implemented_yet}).
+beneficiary(Arg0, #{ chain_api := API } = EngineState) ->
+    write(Arg0, aefa_chain_api:beneficiary(API), EngineState).
 
-timestamp(_Arg0, _EngineState) -> exit({error, op_not_implemented_yet}).
+timestamp(Arg0, #{ chain_api := API } = EngineState) ->
+    write(Arg0, aefa_chain_api:timestamp_in_msecs(API), EngineState).
 
-generation(_Arg0, _EngineState) -> exit({error, op_not_implemented_yet}).
+generation(Arg0, #{ chain_api := API } = EngineState) ->
+    write(Arg0, aefa_chain_api:generation(API), EngineState).
 
 microblock(_Arg0, _EngineState) -> exit({error, op_not_implemented_yet}).
 
-difficulty(_Arg0, _EngineState) -> exit({error, op_not_implemented_yet}).
+difficulty(Arg0, #{ chain_api := API } = EngineState) ->
+    write(Arg0, aefa_chain_api:difficulty(API), EngineState).
 
-gaslimit(_Arg0, _EngineState) -> exit({error, op_not_implemented_yet}).
+gaslimit(Arg0, #{ chain_api := API } = EngineState) ->
+    write(Arg0, aefa_chain_api:gas_limit(API), EngineState).
 
-gas(_Arg0, _EngineState) -> exit({error, op_not_implemented_yet}).
+gas(Arg0, #{ gas := Gas} = EngineState) ->
+    write(Arg0, aeb_fate_data:make_integer(Gas), EngineState).
 
 log(_Arg0, _Arg1, _EngineState) -> exit({error, op_not_implemented_yet}).
 
@@ -529,7 +602,19 @@ log(_Arg0, _Arg1, _Arg2, _Arg3, _Arg4, _Arg5, _EngineState) -> exit({error, op_n
 
 deactivate(_EngineState) -> exit({error, op_not_implemented_yet}).
 
-spend(_Arg0, _Arg1, _EngineState) -> exit({error, op_not_implemented_yet}).
+spend(Arg0, Arg1, #{current_contract := ?FATE_ADDRESS(FromPubkey)} = ES0) ->
+    {Amount, ES1} = get_op_arg(Arg0, ES0),
+    [aefa_fate:abort({value_does_not_match_type, Amount, integer}, ES1)
+     || not ?IS_FATE_INTEGER(Amount)],
+    case get_op_arg(Arg1, ES1) of
+        {?FATE_ADDRESS(ToPubkey), #{chain_api := API} = ES2} ->
+            case aefa_chain_api:spend(FromPubkey, ToPubkey, Amount, API) of
+                {ok, API1}    -> ES2#{chain_api => API1};
+                {error, What} -> aefa_fate:abort({primop_error, spend, What}, ES2)
+            end;
+        {Other, ES2} ->
+            aefa_fate:abort({value_does_not_match_type, Other, address}, ES2)
+    end.
 
 oracle_register(_Arg0, _Arg1, _Arg2, _Arg3, _Arg4, _Arg5, _EngineState) -> exit({error, op_not_implemented_yet}).
 
@@ -659,46 +744,25 @@ write({arg, N}, _, ES) ->
 %% ------------------------------------------------------
 
 
-make_variant(Size, Tag, NoElements, ES)  when ?IS_FATE_INTEGER(Size)
+make_variant(Arities, Tag, NoElements, ES)  when ?IS_FATE_LIST(Arities)
                                               , ?IS_FATE_INTEGER(Tag)
                                               , ?IS_FATE_INTEGER(NoElements)
                                               , NoElements >= 0
-                                              , Size >= 0
-                                              , Tag < Size
+                                              , Tag < length(Arities)
                                               , Tag >= 0 ->
     {Elements, ES2} = aefa_fate:pop_n(NoElements, ES),
     Values = list_to_tuple(Elements),
-    {aeb_fate_data:make_variant(Size, Tag, Values), ES2};
-make_variant(Size, Tag, NoElements, ES) ->
-    aefa_fate:abort({bad_arguments_to_make_variant, Size, Tag, NoElements}, ES).
+    {aeb_fate_data:make_variant(Arities, Tag, Values), ES2};
+make_variant(Arities, Tag, NoElements, ES) ->
+    aefa_fate:abort({bad_arguments_to_make_variant, Arities, Tag, NoElements}, ES).
 
 %% ------------------------------------------------------
 %% Tuple instructions
 %% ------------------------------------------------------
 
 
-make_tuple(Size, ES) ->
-    {Elements, ES2} = aefa_fate:pop_n(Size, ES),
-    Tuple = list_to_tuple(Elements),
-    FateTuple = aeb_fate_data:make_tuple(Tuple),
-    aefa_fate:push(FateTuple, ES2).
 
 
-tuple_element(To, Which, TupleArg, ES) ->
-    {Index, ES1} = get_op_arg(Which, ES),
-    {FateTuple, ES2} = get_op_arg(TupleArg, ES1),
-    case aefa_fate:check_type(integer, Index) andalso ?IS_FATE_TUPLE(FateTuple) of
-        false -> aefa_fate:abort({bad_arguments_to_element, Index, FateTuple}, ES);
-        true ->
-            ?FATE_TUPLE(Tuple) = FateTuple,
-            case size(Tuple) > Index of
-                true ->
-                    V = element(Index+1, Tuple),
-                    write(To, V, ES2);
-                false ->
-                    aefa_fate:abort({element_index_out_of_bounds, Index}, ES)
-            end
-    end.
 
 %% Unary operations
 op(get, A) ->

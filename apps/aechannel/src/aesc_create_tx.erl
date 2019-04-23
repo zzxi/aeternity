@@ -20,11 +20,12 @@
          check/3,
          process/3,
          signers/2,
-         version/0,
+         version/1,
          serialization_template/1,
          serialize/1,
          deserialize/2,
-         for_client/1
+         for_client/1,
+         valid_at_protocol/2
         ]).
 
 %% Getters
@@ -142,7 +143,7 @@ check(#channel_create_tx{}, Trees,_Env) ->
 -spec process(tx(), aec_trees:trees(), aetx_env:env()) -> {ok, aec_trees:trees(), aetx_env:env()}.
 process(#channel_create_tx{} = Tx, Trees, Env) ->
     Instructions =
-        aec_tx_processor:channel_create_tx_instructions(
+        aeprimop:channel_create_tx_instructions(
           initiator_pubkey(Tx),
           initiator_amount(Tx),
           responder_pubkey(Tx),
@@ -152,8 +153,9 @@ process(#channel_create_tx{} = Tx, Trees, Env) ->
           state_hash(Tx),
           lock_period(Tx),
           fee(Tx),
-          nonce(Tx)),
-    aec_tx_processor:eval(Instructions, Trees, Env).
+          nonce(Tx),
+          round(Tx)),
+    aeprimop:eval(Instructions, Trees, Env).
 
 -spec signers(tx(), aec_trees:trees()) -> {ok, list(aec_keys:pubkey())}.
 signers(#channel_create_tx{} = Tx, _) ->
@@ -170,8 +172,8 @@ serialize(#channel_create_tx{initiator_id       = InitiatorId,
                              fee                = Fee,
                              delegate_ids       = DelegateIds,
                              state_hash         = StateHash,
-                             nonce              = Nonce}) ->
-    {version(),
+                             nonce              = Nonce} = Tx) ->
+    {version(Tx),
      [ {initiator_id      , InitiatorId}
      , {initiator_amount  , InitiatorAmount}
      , {responder_id      , ResponderId}
@@ -314,13 +316,13 @@ delegate_ids(#channel_create_tx{delegate_ids = DelegateIds}) ->
 delegate_pubkeys(#channel_create_tx{delegate_ids = DelegateIds}) ->
     [aeser_id:specialize(D, account) || D <- DelegateIds].
 
-%%%===================================================================
-%%% Internal functions
-%%%===================================================================
-
--spec version() -> non_neg_integer().
-version() ->
+-spec version(tx()) -> non_neg_integer().
+version(_) ->
     ?CHANNEL_CREATE_TX_VSN.
+
+-spec valid_at_protocol(aec_hard_forks:protocol_vsn(), tx()) -> boolean().
+valid_at_protocol(_, _) ->
+    true.
 
 %%%===================================================================
 %%% Test setters 

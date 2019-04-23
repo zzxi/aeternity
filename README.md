@@ -1,5 +1,10 @@
 # Aeternity node
 
+[![CircleCI][circleci badge]][circleci]
+[![Appveyor][appveyor badge]][appveyor]
+[![License][license badge]][license]
+[![Build Tool][build tool]][rebar3]
+
 A new blockchain for æpps.
 
 Optimized for scalability via smart contracts inside state-channels.
@@ -51,6 +56,19 @@ The `master` branch tracks the ongoing efforts towards the next stable release t
 [latest-release]: https://github.com/aeternity/aeternity/releases/latest
 [master]: https://github.com/aeternity/aeternity/tree/master
 
+## Quick Start
+
+By using the installer to install the latest stable version:
+```bash
+bash <(curl -s https://raw.githubusercontent.com/aeternity/installer/v2.0.0/install.sh)
+```
+
+Or running a docker container (latest tag):
+```bash
+docker pull aeternity/aeternity
+docker run -p 3013:3013 -p 3015:3015 aeternity/aeternity
+```
+
 ## Installation
 
 See the documenation on how to:
@@ -89,3 +107,13 @@ See [the documentation on how to run the Aeternity node if you prefer Docker][do
 # Additional resources
 
 * [Threat Model](https://github.com/aeternity/aetmodel/blob/master/ThreatModel.md)
+
+
+[circleci]: https://circleci.com/gh/aeternity/aeternity
+[circleci badge]: https://circleci.com/gh/aeternity/aeternity.svg?style=shield
+[appveyor]: https://ci.appveyor.com/project/aeternity/aeternity
+[appveyor badge]: https://ci.appveyor.com/api/projects/status/github/aeternity/aeternity?branch=master&svg=true
+[license badge]: https://img.shields.io/badge/license-ISC-blue.svg
+[license]: https://github.com/aeternity/aeternity/blob/master/LICENSE
+[build tool]: https://img.shields.io/badge/build%20tool-rebar3-orange.svg
+[rebar3]: https://www.rebar3.org

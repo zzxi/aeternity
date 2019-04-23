@@ -19,11 +19,12 @@
          check/3,
          process/3,
          signers/2,
-         version/0,
+         version/1,
          serialization_template/1,
          serialize/1,
          deserialize/2,
-         for_client/1
+         for_client/1,
+         valid_at_protocol/2
         ]).
 
 -export([account_id/1,
@@ -107,9 +108,9 @@ check(#ns_revoke_tx{}, Trees,_Env) ->
 -spec process(tx(), aec_trees:trees(), aetx_env:env()) -> {ok, aec_trees:trees()} | {error, term()}.
 process(#ns_revoke_tx{} = Tx, Trees, Env) ->
     Instructions =
-        aec_tx_processor:name_revoke_tx_instructions(
+        aeprimop:name_revoke_tx_instructions(
           account_pubkey(Tx), name_hash(Tx), fee(Tx), nonce(Tx)),
-    aec_tx_processor:eval(Instructions, Trees, Env).
+    aeprimop:eval(Instructions, Trees, Env).
 
 -spec signers(tx(), aec_trees:trees()) -> {ok, [aec_keys:pubkey()]}.
 signers(#ns_revoke_tx{} = Tx, _) ->
@@ -120,8 +121,8 @@ serialize(#ns_revoke_tx{account_id = AccountId,
                         nonce      = Nonce,
                         name_id    = NameId,
                         fee        = Fee,
-                        ttl        = TTL}) ->
-    {version(),
+                        ttl        = TTL} = Tx) ->
+    {version(Tx),
      [ {account_id, AccountId}
      , {nonce, Nonce}
      , {name_id, NameId}
@@ -174,6 +175,11 @@ account_pubkey(#ns_revoke_tx{account_id = AccountId}) ->
 name_hash(#ns_revoke_tx{name_id = NameId}) ->
     aeser_id:specialize(NameId, name).
 
-version() ->
+-spec version(tx()) -> non_neg_integer().
+version(_) ->
     ?NAME_REVOKE_TX_VSN.
+
+-spec valid_at_protocol(aec_hard_forks:protocol_vsn(), tx()) -> boolean().
+valid_at_protocol(_, _) ->
+    true.
 

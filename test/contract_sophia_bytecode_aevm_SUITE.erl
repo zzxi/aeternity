@@ -1,5 +1,6 @@
 -module(contract_sophia_bytecode_aevm_SUITE).
--behaviour(aevm_chain_api).
+
+%% Commented for avoiding warnings without implementing all dummy callback. %% -behaviour(aevm_chain_api).
 
 -include_lib("stdlib/include/assert.hrl").
 
@@ -26,7 +27,7 @@
    , blockhash/2
    ]).
 
-%% chain API exports
+%% aevm_chain_api callbacks
 -export([ get_height/1,
           spend_tx/3,
           spend/2,
@@ -50,7 +51,7 @@
           oracle_extend_tx/3,
           oracle_extend/3]).
 
--include("apps/aecontract/src/aecontract.hrl").
+-include_lib("aecontract/include/aecontract.hrl").
 -include_lib("common_test/include/ct.hrl").
 
 -define(ABI_SOPHIA, aect_test_utils:latest_sophia_abi_version()).
@@ -88,7 +89,7 @@ execute_call(Contract, CallData, ChainState, Options) ->
     #{ byte_code := Code,
        type_info := TypeInfo
      } = aect_sophia:deserialize(SerializedCode),
-    case aeso_abi:check_calldata(CallData, TypeInfo) of
+    case aeb_abi:check_calldata(CallData, TypeInfo) of
         {ok, CallDataType, OutType} ->
             execute_call_1(Contract, CallData, CallDataType, OutType, Code, ChainState1, Options);
         {error, _} = Err ->
@@ -211,7 +212,7 @@ successful_call(Contract, Type, Fun, Args, Env) ->
 successful_call(Contract, Type, Fun, Args, Env, Options) ->
     case make_call(Contract, Fun, Args, Env, Options) of
         {ok, Result, Env1} ->
-            case aeso_heap:from_binary(Type, Result) of
+            case aeb_heap:from_binary(Type, Result) of
                 {ok, V} -> {V, Env1};
                 {error, _} = Err -> exit(Err)
             end;
@@ -516,8 +517,8 @@ oracles(_Cfg) ->
                     q_ttl := {delta, 10},
                     r_ttl := {delta, 11},
                     answer := {some, 42} }}} = Env5,
-    {ok, string} = aeso_heap:from_binary(typerep, QFormat),
-    {ok, word}   = aeso_heap:from_binary(typerep, RFormat),
+    {ok, string} = aeb_heap:from_binary(typerep, QFormat),
+    {ok, word}   = aeb_heap:from_binary(typerep, RFormat),
     ok.
 
 
@@ -583,7 +584,7 @@ get_contract_fun_types(<<Contract:256>>,_VMVersion, TypeHash, S) ->
             {error, {no_such_contract, Contract}};
         #{bytecode := SerializedCode} ->
             #{type_info := TypeInfo} = aect_sophia:deserialize(SerializedCode),
-            aeso_abi:typereps_from_type_hash(TypeHash, TypeInfo)
+            aeb_abi:typereps_from_type_hash(TypeHash, TypeInfo)
     end.
 
 
@@ -610,8 +611,8 @@ oracle_register_tx(PubKey = <<Account:256>>, QueryFee, TTL, QFormat, RFormat, AB
     Spec =
         #{account_id      => aeser_id:create(account, PubKey),
           nonce           => 1,
-          query_format    => aeso_heap:to_binary(QFormat),
-          response_format => aeso_heap:to_binary(RFormat),
+          query_format    => aeb_heap:to_binary(QFormat),
+          response_format => aeb_heap:to_binary(RFormat),
           query_fee       => QueryFee,
           oracle_ttl      => TTL,
           ttl             => 0,
@@ -643,7 +644,7 @@ oracle_query_tx(OracleKey = <<Oracle:256>>, Q, Value, QTTL, RTTL,_State) ->
         #{sender_id     => aeser_id:create(account, OracleKey),
           nonce         => 1,
           oracle_id     => aeser_id:create(oracle, OracleKey),
-          query         => aeso_heap:to_binary(Q),
+          query         => aeb_heap:to_binary(Q),
           query_fee     => 0,
           query_ttl     => QTTL,
           response_ttl  => RTTL,
@@ -658,7 +659,7 @@ oracle_query(Tx, State) ->
     <<QueryId:256>> = aeo_query_tx:query_id(OTx),
     QBin = aeo_query_tx:query(OTx),
     {ok, Fmt} = oracle_query_format(<<Oracle:256>>, State),
-    {ok, Q} = aeso_heap:from_binary(Fmt, QBin),
+    {ok, Q} = aeb_heap:from_binary(Fmt, QBin),
     QTTL = aeo_query_tx:query_ttl(OTx),
     RTTL = aeo_query_tx:response_ttl(OTx),
     Queries = maps:get(oracle_queries, State, #{}),
@@ -679,7 +680,7 @@ oracle_respond_tx(OracleKey, QueryIdKey = <<QueryId:256>>, R, RTTL,_State) ->
         #{oracle_id    => aeser_id:create(oracle, OracleKey),
           nonce        => 1,
           query_id     => QueryIdKey,
-          response     => aeso_heap:to_binary(R),
+          response     => aeb_heap:to_binary(R),
           response_ttl => RTTL,
           fee          => 0,
           ttl          => 0 %% Not used
@@ -692,7 +693,7 @@ oracle_respond(Tx, _Signature, State) ->
     Oracle = aeser_id:specialize(aeo_response_tx:oracle_id(OTx), oracle),
     RBin = aeo_response_tx:response(OTx),
     {ok, Fmt} = oracle_response_format(Oracle, State),
-    {ok, R} = aeso_heap:from_binary(Fmt, RBin),
+    {ok, R} = aeb_heap:from_binary(Fmt, RBin),
     case maps:get(oracle_queries, State, #{}) of
         #{QueryId := Q} = Queries ->
             State1 =
@@ -756,13 +757,13 @@ oracle_query_response_ttl(<<_Oracle:256>>, <<QueryId:256>>, State) ->
 
 oracle_query_format(<<Oracle:256>>, State) ->
     case maps:get(oracles, State, []) of
-        #{Oracle := #{query_format := Format}} -> aeso_heap:from_binary(typerep, Format);
+        #{Oracle := #{query_format := Format}} -> aeb_heap:from_binary(typerep, Format);
         _ -> {error, {no_such_oracle, Oracle}}
     end.
 
 oracle_response_format(<<Oracle:256>>, State) ->
     case maps:get(oracles, State, #{}) of
-        #{Oracle := #{response_format := Format}} -> aeso_heap:from_binary(typerep, Format);
+        #{Oracle := #{response_format := Format}} -> aeb_heap:from_binary(typerep, Format);
         _ -> {error, {no_such_oracle, Oracle}}
     end.
 

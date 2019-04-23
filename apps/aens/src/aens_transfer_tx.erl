@@ -20,11 +20,12 @@
          check/3,
          process/3,
          signers/2,
-         version/0,
+         version/1,
          serialization_template/1,
          serialize/1,
          deserialize/2,
-         for_client/1
+         for_client/1,
+         valid_at_protocol/2
         ]).
 
 -export([account_id/1,
@@ -118,13 +119,13 @@ check(#ns_transfer_tx{}, Trees,_Env) ->
 -spec process(tx(), aec_trees:trees(), aetx_env:env()) -> {ok, aec_trees:trees(), aetx_env:env()}.
 process(#ns_transfer_tx{} = TTx, Trees, Env) ->
     Instructions =
-        aec_tx_processor:name_transfer_tx_instructions(
+        aeprimop:name_transfer_tx_instructions(
           account_pubkey(TTx),
           recipient_id(TTx),
           name_hash(TTx),
           fee(TTx),
           nonce(TTx)),
-    aec_tx_processor:eval(Instructions, Trees, Env).
+    aeprimop:eval(Instructions, Trees, Env).
 
 -spec signers(tx(), aec_trees:trees()) -> {ok, [aec_keys:pubkey()]}.
 signers(#ns_transfer_tx{} = Tx, _) ->
@@ -136,8 +137,8 @@ serialize(#ns_transfer_tx{account_id   = AccountId,
                           name_id      = NameId,
                           recipient_id = RecipientId,
                           fee          = Fee,
-                          ttl          = TTL}) ->
-    {version(),
+                          ttl          = TTL} = Tx) ->
+    {version(Tx),
      [ {account_id, AccountId}
      , {nonce, Nonce}
      , {name_id, NameId}
@@ -214,5 +215,11 @@ recipient_id(#ns_transfer_tx{recipient_id = RecipientId}) ->
 %%% Internal functions
 %%%===================================================================
 
-version() ->
+-spec version(tx()) -> non_neg_integer().
+version(_) ->
     ?NAME_TRANSFER_TX_VSN.
+
+-spec valid_at_protocol(aec_hard_forks:protocol_vsn(), tx()) -> boolean().
+valid_at_protocol(_, _) ->
+    true.
+

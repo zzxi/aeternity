@@ -8,6 +8,13 @@
 -module(aefa_fate).
 -export([run/2]).
 
+-export([ gas/1
+        , logs/1
+        , final_trees/1
+        , return_value/1
+        , tx_env/1
+        ]).
+
 -export([get_trace/1]).
 
 %% Type handling.
@@ -40,6 +47,11 @@
         , abort/2
         ]).
 
+%% For unit tests
+-ifdef(TEST).
+-export([ run_with_cache/3
+        ]).
+-endif.
 
 -include_lib("aebytecode/include/aeb_fate_data.hrl").
 
@@ -53,15 +65,42 @@
 %%% API
 %%%===================================================================
 
-run(What, Chain) ->
-    EngineState = setup_engine(What, Chain),
-    try execute(EngineState) of
+-ifdef(TEST).
+run_with_cache(What, Spec, Cache) ->
+    try execute(setup_engine(What, Spec, Cache)) of
+        Res -> {ok, Res}
+    catch
+        throw:{?MODULE, E, ES} -> {error, E, ES}
+    end.
+-endif.
+
+run(What, Env) ->
+    try execute(setup_engine(What, Env)) of
         Res -> {ok, Res}
     catch
         throw:{?MODULE, E, ES} -> {error, E, ES}
     end.
 
-get_trace(#{trace := T}) -> T.
+get_trace(#{trace := T}) ->
+    T.
+
+return_value(#{accumulator := A}) ->
+    A.
+
+tx_env(#{chain_api := API}) ->
+    aefa_chain_api:tx_env(API).
+
+gas(#{gas := Gas}) ->
+    %% TODO: The gas is not calculated yet
+    Gas.
+
+logs(#{logs := Logs}) ->
+    %% TODO: Logs are not constructed yet
+    Logs.
+
+final_trees(#{chain_api := API}) ->
+    aefa_chain_api:final_trees(API).
+
 
 %%%===================================================================
 %%% Internal functions
@@ -80,8 +119,8 @@ abort({bad_arguments_to_element, Index, Tuple}, ES) ->
     ?t("Bad argument to element, Tuple: ~p, Index: ~p", [Tuple, Index], ES);
 abort({bad_element_type, Type, Value}, ES) ->
     ?t("Type error in element: ~p is not of type ~p", [Value, Type], ES);
-abort({bad_variant_tag, Tag, Size}, ES) ->
-    ?t("Type error in switch: tag ~p is larger than ~p", [Tag, Size], ES);
+abort({bad_variant_tag, Tag}, ES) ->
+    ?t("Type error in switch: tag ~p is larger than switch op", [Tag], ES);
 abort({bad_variant_size, Size}, ES) ->
     ?t("Type error in switch: wrong size ~p", [Size], ES);
 abort(hd_on_empty_list, ES) ->
@@ -111,7 +150,12 @@ abort({value_does_not_match_type, Val, Type}, ES) ->
 abort({trying_to_reach_bb, BB}, ES) ->
     ?t("Trying to jump to non existing bb: ~p", [BB], ES);
 abort({trying_to_call_function, Name}, ES) ->
-    ?t("Trying to call undefined function: ~p", [Name], ES).
+    ?t("Trying to call undefined function: ~p", [Name], ES);
+abort({trying_to_call_contract, Pubkey}, ES) ->
+    ?t("Trying to call invalid contract: ~p", [Pubkey], ES);
+abort(bad_byte_code, ES) ->
+    ?t("Bad byte code", [], ES).
+
 
 abort(E) -> throw({add_engine_state, E}).
 
@@ -145,37 +189,54 @@ step([I|Is], EngineState0) ->
 
 %% -----------------------------------------------------------
 
+setup_engine(#{ contract := <<_:256>> = ContractPubkey
+              , code := ByteCode} = Spec, State) ->
+    try aeb_fate_asm:bytecode_to_fate_code(ByteCode, []) of
+        Code ->
+            Address = aeb_fate_data:make_address(ContractPubkey),
+            Cache = #{ Address => Code },
+            setup_engine(Spec, State, Cache)
+    catch _:_ ->
+            abort(bad_bytecode, no_state)
+    end.
 
-
-setup_engine(#{ contract := Contract
-              , call := Call},
-             Chain) ->
+setup_engine(#{ contract := <<_:256>> = ContractPubkey
+              , call := Call
+              , gas := Gas
+              },
+             Spec, Cache) ->
     {tuple, {Function, {tuple, ArgTuple}}} =
         aeb_fate_encoding:deserialize(Call),
     Arguments = tuple_to_list(ArgTuple),
-    ES1 = new_engine_state(Chain),
-    ES2 = set_function(Contract, Function, ES1),
+    Address = aeb_fate_data:make_address(ContractPubkey),
+    ES1 = new_engine_state(Gas, Spec, aefa_chain_api:new(Spec), Cache),
+    ES2 = set_function(Address, Function, ES1),
     ES3 = push_arguments(Arguments, ES2),
     Signature = get_function_signature(Function, ES3),
     {ok, ES4} = check_signature_and_bind_args(Signature, ES3),
-    ES4.
+    ES4#{caller => aeb_fate_data:make_address(maps:get(caller, Spec))}.
 
-
-
-set_function(Contract, Function, #{ chain := Chain
-                                  , contracts := Contracts} = ES) ->
+set_function(?FATE_ADDRESS(_) = Address, Function,
+             #{ current_contract := Address } = ES) ->
+    set_current_function(Function, ES);
+set_function(?FATE_ADDRESS(Pubkey) = Address, Function,
+             #{ chain_api := APIState, contracts := Contracts} = ES) ->
     {ES2, #{functions := Code}} =
-        case maps:get(Contract, Contracts, void) of
+        case maps:get(Address, Contracts, void) of
             void ->
-                ContractCode = chain_get_contract(Contract, Chain),
-                {ES#{contracts => maps:put(Contract, ContractCode, Contracts)},
-                 ContractCode};
-            ContractCode ->
-                {ES, ContractCode}
+                case aefa_chain_api:contract_fate_code(Pubkey, APIState) of
+                    {ok, ContractCode, APIState1} ->
+                        Cache = maps:put(Pubkey, ContractCode, Contracts),
+                        {ES#{contracts => Cache, chain_api => APIState1}, ContractCode};
+                    error ->
+                        abort({trying_to_call_contract, Pubkey}, ES)
+                end;
+            ContractCode -> {ES, ContractCode}
         end,
-    ES3 = ES2#{current_contract => Contract},
+    ES3 = ES2#{current_contract => Address},
     ES4 = ES3#{functions => Code},
-    set_current_function(Function, ES4).
+    ES5 = ES4#{caller => maps:get(current_contract, ES)},
+    set_current_function(Function, ES5).
 
 %get_current_contract(#{current_contract := Contract}) ->
 %    Contract.
@@ -241,7 +302,7 @@ check_same_type(T, [A|As]) ->
 bind_args(N, _, [], Mem, EngineState) ->
     new_env(Mem, drop(N, EngineState));
 bind_args(N, [Arg|Args], [Type|Types], Mem, EngineState) ->
-    bind_args(N+1, Args, Types, Mem#{{arg, N} => {Arg, Type}}, EngineState).
+    bind_args(N+1, Args, Types, Mem#{{arg, N} => {val, Arg}}, EngineState).
 
 %% TODO: Add types (and tests).
 check_type(any, _) -> true;
@@ -256,7 +317,7 @@ check_type({list, any}, L) when ?IS_FATE_LIST(L) ->
 check_type({list, ET}, L) when ?IS_FATE_LIST(L) ->
     check_same_type(ET, ?FATE_LIST_VALUE(L));
 check_type({tuple, Elements}, T) when ?IS_FATE_TUPLE(T) ->
-    check_all_types(Elements, aeb_fate_data:tuple_to_list(T));
+    check_all_types(Elements, ?FATE_TUPLE_ELEMENTS(T));
 check_type({map, Key, Value}, M) when ?IS_FATE_MAP(M) ->
     {Ks, Vs} = lists:unzip(maps:to_list(?FATE_MAP_VALUE(M))),
     check_same_type(Key, Ks) andalso
@@ -401,46 +462,41 @@ pop_call_stack(#{ call_stack := [{Contract, Function, BB, Mem}| Rest]
 new_env(Mem, #{ memory := Envs} = EngineState) ->
     EngineState#{ memory => [Mem|Envs]}.
 
-lookup_var(Var, [Env|Envs], ES) ->
+lookup_var(Var, [Env|_Envs], ES) ->
     case maps:get(Var, Env, undefined) of
-        {Value, _Type} ->
+        {val, Value} ->
             Value;
         undefined ->
-            lookup_var(Var, Envs, ES)
+            abort({undefined_var, Var}, ES)
     end;
 lookup_var(Var, [], ES) ->
     abort({undefined_var, Var}, ES).
 
+
 store_var(Var, Val, [Env|Envs]) ->
-    T = type(Val),
-    [Env#{ Var => {Val, T}} | Envs].
+    [Env#{ Var => {val, Val}} | Envs].
 
 %% ------------------------------------------------------
 %% New state
 
 
-new_engine_state(Chain) ->
+new_engine_state(Gas, Spec, APIState, Contracts) ->
     #{ current_bb => 0
      , bbs => #{}
      , memory => [] %% Stack of environments (name => val)
-     , chain => Chain
+     , chain_api => APIState
      , trace => []
      , accumulator => ?FATE_VOID
      , accumulator_stack => []
      , functions => #{} %% Cache for current contract.
-     , contracts => #{} %% Cache for loaded contracts.
+     , contracts => Contracts %% Cache for loaded contracts.
      , current_contract => ?FATE_VOID
      , current_function => ?FATE_VOID
      , call_stack => []
+     , caller => aeb_fate_data:make_address(maps:get(caller, Spec))
+     , gas => Gas %% TODO: Not used properly yet
+     , logs => [] %% TODO: Not used properly yet
      }.
 
 %% ----------------------------
-
-%% TODO: real chain interface
-chain_get_contract(ContractAddress, #{ contracts :=  Contracts} = _Chain) ->
-    case maps:get(ContractAddress, Contracts, void) of
-        void -> throw({error, calling, ContractAddress});
-        C -> C
-    end.
-
 

@@ -8,11 +8,12 @@
 
 -export([ testcase_generate/2
         , testcase_generate/3
+        , dump_words/1
         ]).
 
 -define(EUNIT_NOAUTO, true).
 -include_lib("eunit/include/eunit.hrl").
--include_lib("apps/aecontract/src/aecontract.hrl").
+-include("../../aecontract/include/aecontract.hrl").
 
 -define(opt_format(___Opts__, ___Fmt___, ___Args___),
         case maps:get(trace, ___Opts__, false) of

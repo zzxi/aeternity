@@ -51,25 +51,32 @@ bits_test_() ->
     make_calls(bits()).
 
 make_calls(ListOfCalls) ->
-    Chain = setup_chain(),
+    Cache = setup_contracts(),
+    %% Dummy values since they should not come into play in this test
+    Spec = #{ trees => aec_trees:new_without_backend()
+            , caller => <<123:256>>
+            , origin => <<123:256>>
+            , gas_price => 1
+            , tx_env => aetx_env:tx_env(1)
+            },
     [{lists:flatten(io_lib:format("call(~p,~p,~p)->~p~n~p : ~p",
                                   [C,F,A,R,
-                                   aeb_fate_data:encode(A),
+                                   aefate_test_utils:encode(A),
                                    aeb_fate_encoding:serialize(
-                                     aeb_fate_data:encode(A))])),
+                                     aefate_test_utils:encode(A))])),
       fun() ->
               Call = make_call(C,F,A),
               case R of
                   {error, E} ->
-                      case aefa_fate:run(Call, Chain) of
+                      case aefa_fate:run_with_cache(Call, Spec, Cache) of
                           {ok, nomatch} -> ok;
                           {error, Error, #{trace := Trace}} ->
                               ?assertEqual({E, Trace}, {Error, Trace})
                       end;
                   _ ->
-                      FateRes = aeb_fate_data:encode(R),
+                      FateRes = aefate_test_utils:encode(R),
                       {ok, #{accumulator := Res,
-                             trace := Trace}} = aefa_fate:run(Call, Chain),
+                             trace := Trace}} = aefa_fate:run_with_cache(Call, Spec, Cache),
                       ?assertEqual({FateRes, Trace}, {Res, Trace})
               end
       end}
@@ -137,6 +144,8 @@ memory_restore() ->
     [ {<<"memory">>, F, A, R} ||
         {F,A,R} <-
             [ {<<"call">>, [17], 17}
+            , {<<"call2">>, [17], 17}
+            , {<<"call3">>, [17], {error, <<"Undefined var: {var,1}">>}}
             ]
     ].
 
@@ -224,12 +233,13 @@ string() ->
 variant() ->
     [ {<<"variant">>, F, A, R} ||
         {F,A,R} <-
-            [ {<<"switch">>, [{variant, 2, 0, {}}], 0}
-            , {<<"switch">>, [{variant, 2, 1, {42}}], 42}
-            , {<<"test">>, [{variant, 2, 1, {42}}, 1], true}
-            , {<<"test">>, [{variant, 2, 1, {42}}, 2], false}
-            , {<<"element">>, [{variant, 2, 1, {42}}, 1], 42}
-            , {<<"make">>, [2, 1, 1, [42]], {variant, 2, 1, {42}}}
+            [ {<<"switch">>, [{variant, [0,1], 0, {}}], 0}
+            , {<<"switch">>, [{variant, [0,1], 1, {42}}], 42}
+            , {<<"switch2">>, [{variant, [0,1,2], 1, {42}}], {error, <<"Type error in switch: wrong size 3">>}}
+            , {<<"test">>, [{variant, [0,1], 1, {42}}, 1], true}
+            , {<<"test">>, [{variant, [0,1], 1, {42}}, 2], false}
+            , {<<"element">>, [{variant, [0,1], 1, {42}}, 1], 42}
+            , {<<"make">>, [[0,1], 1, 1, [42]], {variant, [0,1], 1, {42}}}
             ]
     ].
 
@@ -253,32 +263,36 @@ bits() ->
 
 
 make_call(Contract, Function, Arguments) ->
-    #{ contract  => Contract
+    #{ contract  => pad_contract_name(Contract)
+     , gas => 100000
      , call => aeb_fate_encoding:serialize(
                  {tuple, {Function, {tuple, list_to_tuple(
-                                              [aeb_fate_data:encode(A) || A <- Arguments]
+                                              [aefate_test_utils:encode(A) || A <- Arguments]
                                              )}
                          }
                  }
                 )
      }.
 
-
-setup_chain() ->
-    #{ contracts => setup_contracts()}.
-
 setup_contracts() ->
     Cs = contracts(),
-    NewCs = [{C, setup_contract(Functions)}
+    NewCs = [{aeb_fate_data:make_address(pad_contract_name(C)), setup_contract(Functions)}
              || {C, Functions} <- maps:to_list(Cs)],
     maps:from_list(NewCs).
+
+pad_contract_name(Name) ->
+    PadSize = 32 - byte_size(Name),
+    iolist_to_binary([Name, lists:duplicate(PadSize, "_")]).
 
 setup_contract(Functions) ->
     lists:foldl(
       fun({FunctionName, Signature, BBs}, State) ->
               set_function_code(FunctionName, Signature, BBs, State)
       end,
-      #{functions => #{}},
+      #{functions => #{},
+        annotations => #{},
+        symbols => #{}
+       },
       Functions).
 
 set_function_code(Name, Signature, BBs, #{functions := Functions} = S) ->
@@ -286,9 +300,8 @@ set_function_code(Name, Signature, BBs, #{functions := Functions} = S) ->
     maps:put(functions, NewFunctions, S).
 
 set_bbs([], BBs) -> BBs;
-set_bbs([{N, Code}|Rest], BBs) -> 
+set_bbs([{N, Code}|Rest], BBs) ->
     set_bbs(Rest, BBs#{N => Code}).
-     
 
 contracts() ->
     #{ <<"test">> =>
@@ -324,7 +337,9 @@ contracts() ->
            , { <<"remote_call">>
              , {[integer],integer}
              , [ {0, [ {'PUSH', {arg,0}},
-                       {'CALL_R', {immediate, <<"remote">>}, {immediate, <<"add_five">>}} ]}
+                       {'CALL_R',
+                        {immediate, aeb_fate_data:make_address(pad_contract_name(<<"remote">>))},
+                        {immediate, <<"add_five">>}} ]}
                , {1, [ {'INC', {stack, 0}},
                        'RETURN']}
                ]
@@ -332,7 +347,9 @@ contracts() ->
            , { <<"remote_tailcall">>
              , {[integer],integer}
              , [ {0, [ {'PUSH', {arg,0}},
-                       {'CALL_TR', {immediate, <<"remote">>}, {immediate, <<"add_five">>}} ]}
+                       {'CALL_TR',
+                        {immediate, aeb_fate_data:make_address(pad_contract_name(<<"remote">>))},
+                        {immediate, <<"add_five">>}} ]}
                ]
              }
            ]
@@ -433,10 +450,37 @@ contracts() ->
                      , 'RETURN'
                      ]}
                ]}
+           ,  {<<"call2">>
+             , {[integer], integer}
+             , [ {0, [ {'STORE', {var, 2}, {arg, 0}}
+                     , {'PUSH', {immediate, 0}}
+                     , {'CALL', {immediate, <<"write">>}}
+                     ]
+                 }
+               , {1, [ {'PUSH', {var, 2}}
+                     , 'RETURN'
+                     ]}
+               ]}
+           ,  {<<"call3">>
+             , {[integer], integer}
+             , [ {0, [ {'STORE', {var, 1}, {arg, 0}}
+                     , {'PUSH', {immediate, 0}}
+                     , {'CALL', {immediate, <<"read">>}}
+                     ]
+                 }
+               , {1, [ {'PUSH', {var, 1}}
+                     , 'RETURN'
+                     ]}
+               ]}
            , {<<"write">>
              , {[integer], integer}
              , [ {0, [ {'STORE', {var, 1}, {arg, 0}}
                      , {'RETURNR', {var, 1}}
+                     ]}
+               ]}
+           , {<<"read">>
+             , {[integer], integer}
+             , [ {0, [ {'RETURNR', {var, 1}}
                      ]}
                ]}
            , {<<"dest_add">>
@@ -608,23 +652,29 @@ contracts() ->
 
      , <<"variant">> =>
            [ {<<"switch">>
-             , {[{variant, 2}], integer}
+             , {[{variant, [0,1]}], integer}
+             , [ {0, [ {'SWITCH_V2', {arg,0}, {immediate, 1}, {immediate, 2}}]}
+               , {1, [{'RETURNR', {immediate, 0}}]}
+               , {2, [{'RETURNR', {immediate, 42}}]}
+               ]}
+           , {<<"switch2">>
+             , {[{variant, [0,1,2]}], integer}
              , [ {0, [ {'SWITCH_V2', {arg,0}, {immediate, 1}, {immediate, 2}}]}
                , {1, [{'RETURNR', {immediate, 0}}]}
                , {2, [{'RETURNR', {immediate, 42}}]}
                ]}
            , {<<"test">>
-             , {[{variant, 2}, integer], boolean}
+             , {[{variant, [0,1]}, integer], boolean}
              , [ {0, [ {'VARIANT_TEST', {stack, 0}, {arg,0}, {arg, 1}}
                      , 'RETURN']}
                ]}
            , {<<"element">>
-             , {[{variant, 2}, integer], integer}
+             , {[{variant, [0,1]}, integer], integer}
              , [ {0, [ {'VARIANT_ELEMENT', {stack, 0}, {arg,0}, {arg, 1}}
                      , 'RETURN']}
                ]}
            , {<<"make">>
-             , {[integer, integer, integer, {list, integer}], {variant, 2}}
+             , {[{list, integer}, integer, integer, {list, integer}], {variant, [0,1]}}
              , [ {0, [ {'STORE', {var, 1}, {arg, 0}}
                      , {'STORE', {var, 2}, {arg, 1}}
                      , {'STORE', {var, 3}, {arg, 3}}
@@ -690,5 +740,3 @@ contracts() ->
            ]
 
        }.
-
-

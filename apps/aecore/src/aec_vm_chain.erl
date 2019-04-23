@@ -47,8 +47,8 @@
           get_contract_fun_types/4
         ]).
 
--include_lib("apps/aecore/include/blocks.hrl").
--include_lib("apps/aecontract/src/aecontract.hrl").
+-include("../include/blocks.hrl").
+-include("../../aecontract/include/aecontract.hrl").
 
 -define(NO_INNER_TREES, no_inner_trees).
 
@@ -200,8 +200,8 @@ spend(Tx, State) ->
 
 %%    Oracle
 -spec oracle_register_tx(aec_keys:pubkey(), non_neg_integer(), aeo_oracles:ttl(),
-                         aeso_sophia:type(), aeso_sophia:type(), aect_contracts:abi_version(),
-                         chain_state()) ->
+                         aeb_aevm_data:type(), aeb_aevm_data:type(),
+                         aect_contracts:abi_version(), chain_state()) ->
     {ok, aetx:tx()} | {error, term()}.
 oracle_register_tx(AccountKey, QueryFee, TTL, QFormat, RFormat, ABIVersion, State) ->
     on_chain_only(State, fun() -> oracle_register_tx_(AccountKey, QueryFee, TTL,
@@ -212,8 +212,8 @@ oracle_register_tx(AccountKey, QueryFee, TTL, QFormat, RFormat, ABIVersion, Stat
 oracle_register_tx_(AccountKey, QueryFee, TTL, QFormat,
                     RFormat, ABIVersion, State) ->
     Nonce = next_nonce(AccountKey, State),
-    BinaryQueryFormat = aeso_heap:to_binary(QFormat),
-    BinaryResponseFormat = aeso_heap:to_binary(RFormat),
+    BinaryQueryFormat = aeb_heap:to_binary(QFormat),
+    BinaryResponseFormat = aeb_heap:to_binary(RFormat),
     Spec =
         #{account_id      => aeser_id:create(account, AccountKey),
           nonce           => Nonce,
@@ -231,11 +231,11 @@ oracle_register_tx_(AccountKey, QueryFee, TTL, QFormat,
 oracle_register(Tx, Signature, State) ->
     on_chain_only(State, fun() -> oracle_register_(Tx, Signature, State) end).
 
-oracle_register_(Tx, Signature, State = #state{account = ContractKey}) ->
+oracle_register_(Tx, Signature, State) ->
     {aeo_register_tx, OTx} = aetx:specialize_callback(Tx),
     AccountKey = aeo_register_tx:account_pubkey(OTx),
     Result =
-        case check_account_signature(AccountKey, ContractKey, Signature) of
+        case check_account_signature(AccountKey, Signature, State) of
             ok                -> apply_transaction(Tx, State);
             Err_ = {error, _} -> Err_
         end,
@@ -303,8 +303,8 @@ maybe_convert_oracle_arg(OracleId, Arg, State) ->
     case aeo_state_tree:lookup_oracle(OracleId, aec_trees:oracles(Trees)) of
         {value, Oracle} ->
             case aeo_oracles:abi_version(Oracle) of
-                ?ABI_NO_VM    -> Arg;
-                ?ABI_SOPHIA_1 -> aeso_heap:to_binary(Arg)
+                ?ABI_NO_VM         -> Arg;
+                ?ABI_AEVM_SOPHIA_1 -> aeb_heap:to_binary(Arg)
             end;
         none ->
             %% Will fail later
@@ -322,7 +322,7 @@ oracle_respond_(Tx, Signature, State = #state{ account = ContractKey }) ->
     OracleKey = aeo_response_tx:oracle_pubkey(OTx),
     QueryId = aeo_response_tx:query_id(OTx),
     Bin = <<QueryId/binary, ContractKey/binary>>,
-    case check_signature(OracleKey, ContractKey, Bin, Signature) of
+    case check_signature(OracleKey, ContractKey, Bin, Signature, State) of
         ok               -> apply_transaction(Tx, State);
         Err = {error, _} -> Err
     end.
@@ -348,10 +348,10 @@ oracle_extend_tx_(Oracle, TTL, State) ->
 oracle_extend(Tx, Signature, State) ->
     on_chain_only(State, fun() -> oracle_extend_(Tx,Signature, State) end).
 
-oracle_extend_(Tx, Signature, State = #state{ account = ContractKey }) ->
+oracle_extend_(Tx, Signature, State) ->
     {aeo_extend_tx, OTx} = aetx:specialize_callback(Tx),
     OracleKey = aeo_extend_tx:oracle_pubkey(OTx),
-    case check_account_signature(OracleKey, ContractKey, Signature) of
+    case check_account_signature(OracleKey, Signature, State) of
         ok               -> apply_transaction(Tx, State);
         Err = {error, _} -> Err
     end.
@@ -369,8 +369,8 @@ oracle_get_answer(OracleId, QueryId, #state{trees = ChainTrees}) ->
                     ResponseFormat = aeo_oracles:response_format(Oracle),
                     ABIVersion = aeo_oracles:abi_version(Oracle),
                     case oracle_typerep(ABIVersion, ResponseFormat) of
-                        {ok, Type} when ABIVersion =:= ?ABI_SOPHIA_1 ->
-                            try aeso_heap:from_binary(Type, Answer) of
+                        {ok, Type} when ABIVersion =:= ?ABI_AEVM_SOPHIA_1 ->
+                            try aeb_heap:from_binary(Type, Answer) of
                                 {ok, Result} -> {ok, {some, Result}};
                                 {error, _} -> {error, bad_answer}
                             catch _:_ ->
@@ -400,7 +400,7 @@ oracle_get_question(OracleId, QueryId, #state{trees = ChainTrees}) ->
                     %% We treat the question as a non-sophia string
                     {ok, aeo_query:query(Query)};
                 {ok, QueryType} ->
-                    try aeso_heap:from_binary(QueryType, aeo_query:query(Query)) of
+                    try aeb_heap:from_binary(QueryType, aeo_query:query(Query)) of
                         {ok, Question} ->
                             {ok, Question};
                         {error, _} ->
@@ -421,7 +421,7 @@ oracle_query_fee(Oracle, #state{trees = ChainTrees, vm_version=VMVersion}) ->
         {value, O} ->
             Fee = aeo_oracles:query_fee(O),
             {ok, Fee};
-        none when ?IS_VM_SOPHIA(VMVersion), VMVersion >= ?VM_AEVM_SOPHIA_2 ->
+        none when ?IS_AEVM_SOPHIA(VMVersion), VMVersion >= ?VM_AEVM_SOPHIA_2 ->
             {error, no_such_oracle};
         none when VMVersion =:= ?VM_AEVM_SOPHIA_1 ->
             %% Backwards compatible bug.
@@ -462,26 +462,35 @@ oracle_response_format(Oracle, #state{trees = ChainTrees}) ->
 oracle_typerep(?ABI_NO_VM,_BinaryFormat) ->
     %% Treat this as a string
     {ok, string};
-oracle_typerep(?ABI_SOPHIA_1, BinaryFormat) ->
-    try aeso_heap:from_binary(typerep, BinaryFormat) of
+oracle_typerep(?ABI_AEVM_SOPHIA_1, BinaryFormat) ->
+    try aeb_heap:from_binary(typerep, BinaryFormat) of
         {ok, Format} -> {ok, Format};
         {error, _} -> {error, bad_typerep}
     catch
         _:_ -> {error, bad_typerep}
     end.
 
-check_account_signature(AKey, CKey, Signature) ->
-    check_signature(AKey, CKey, <<AKey/binary, CKey/binary>>, Signature).
+check_account_signature(AKey, Signature, #state{ account = CKey } = State) ->
+    check_signature(AKey, CKey, <<AKey/binary, CKey/binary>>, Signature, State).
 
-check_name_signature(AKey, Hash, CKey, Signature) ->
-    check_signature(AKey, CKey, <<AKey/binary, Hash/binary, CKey/binary>>, Signature).
+check_name_signature(AKey, Hash, Signature, #state{ account = CKey } = State) ->
+    check_signature(AKey, CKey, <<AKey/binary, Hash/binary, CKey/binary>>, Signature, State).
 
-check_signature(AKey, AKey, _Binary, _Signature) -> ok;
-check_signature(AKey, _CKey, Binary, Signature) ->
-    BinaryForNetwork = aec_governance:add_network_id(Binary),
-    case enacl:sign_verify_detached(Signature, BinaryForNetwork, AKey) of
-       {ok, _}    -> ok;
-       {error, _} -> {error, signature_check_failed}
+check_signature(AKey, AKey, _Binary, _Signature, _State) -> ok;
+check_signature(AKey, _CKey, Binary, Signature, State) ->
+    Trees = get_trees(State),
+    case aec_accounts_trees:lookup(AKey, aec_trees:accounts(Trees)) of
+        none -> {error, signature_check_failed};
+        {value, Account} ->
+            case aec_accounts:type(Account) of
+                generalized -> {error, signature_check_failed};
+                basic ->
+                    BinaryForNetwork = aec_governance:add_network_id(Binary),
+                    case enacl:sign_verify_detached(Signature, BinaryForNetwork, AKey) of
+                       {ok, _}    -> ok;
+                       {error, _} -> {error, signature_check_failed}
+                    end
+            end
     end.
 
 %%    AENS
@@ -521,10 +530,10 @@ aens_preclaim_tx_(Addr, CHash, State) ->
 aens_preclaim(Tx, Signature, State) ->
     on_chain_only(State, fun() -> aens_preclaim_(Tx, Signature, State) end).
 
-aens_preclaim_(Tx, Signature, #state{ account = ContractKey} = State) ->
+aens_preclaim_(Tx, Signature, State) ->
     {aens_preclaim_tx, NSTx} = aetx:specialize_callback(Tx),
     Addr = aeser_id:specialize(aens_preclaim_tx:account_id(NSTx), account),
-    case check_account_signature(Addr, ContractKey, Signature) of
+    case check_account_signature(Addr, Signature, State) of
         ok               -> apply_transaction(Tx, State);
         Err = {error, _} -> Err
     end.
@@ -550,12 +559,12 @@ aens_claim_tx_(Addr, Name, Salt, State) ->
 aens_claim(Tx, Signature, State) ->
     on_chain_only(State, fun() -> aens_claim_(Tx, Signature, State) end).
 
-aens_claim_(Tx, Signature, #state{ account = ContractKey } = State) ->
+aens_claim_(Tx, Signature, State) ->
     {aens_claim_tx, NSTx} = aetx:specialize_callback(Tx),
     Addr = aeser_id:specialize(aens_claim_tx:account_id(NSTx), account),
     Name = aens_claim_tx:name(NSTx),
     {ok, Hash} = aens:get_name_hash(Name),
-    case check_name_signature(Addr, Hash, ContractKey, Signature) of
+    case check_name_signature(Addr, Hash, Signature, State) of
         ok               -> apply_transaction(Tx, State);
         Err = {error, _} -> Err
     end.
@@ -581,11 +590,11 @@ aens_transfer_tx_(FromAddr, ToAddr, Hash, State) ->
 aens_transfer(Tx, Signature, State) ->
     on_chain_only(State, fun() -> aens_transfer_(Tx, Signature, State) end).
 
-aens_transfer_(Tx, Signature, #state{ account = ContractKey } = State) ->
+aens_transfer_(Tx, Signature, State) ->
     {aens_transfer_tx, NSTx} = aetx:specialize_callback(Tx),
     FromAddr = aeser_id:specialize(aens_transfer_tx:account_id(NSTx), account),
     Hash = aeser_id:specialize(aens_transfer_tx:name_id(NSTx), name),
-    case check_name_signature(FromAddr, Hash, ContractKey, Signature) of
+    case check_name_signature(FromAddr, Hash, Signature, State) of
         ok               -> apply_transaction(Tx, State);
         Err = {error, _} -> Err
     end.
@@ -610,11 +619,11 @@ aens_revoke_tx_(Addr, Hash, State) ->
 aens_revoke(Tx, Signature, State) ->
     on_chain_only(State, fun() -> aens_revoke_(Tx, Signature, State) end).
 
-aens_revoke_(Tx, Signature, #state{ account = ContractKey } = State) ->
+aens_revoke_(Tx, Signature, State) ->
     {aens_revoke_tx, NSTx} = aetx:specialize_callback(Tx),
     Addr = aeser_id:specialize(aens_revoke_tx:account_id(NSTx), account),
     Hash = aeser_id:specialize(aens_revoke_tx:name_id(NSTx), name),
-    case check_name_signature(Addr, Hash, ContractKey, Signature) of
+    case check_name_signature(Addr, Hash, Signature, State) of
         ok               -> apply_transaction(Tx, State);
         Err = {error, _} -> Err
     end.
@@ -632,7 +641,7 @@ get_contract_fun_types(Target, VMVersion, TypeHash, State) ->
                 true ->
                     SerializedCode = aect_contracts:code(Contract),
                     #{type_info := TypeInfo} = aect_sophia:deserialize(SerializedCode),
-                    aeso_abi:typereps_from_type_hash(TypeHash, TypeInfo);
+                    aeb_abi:typereps_from_type_hash(TypeHash, TypeInfo);
                 false ->
                     {error, {wrong_vm_version, ContractVMVersion}}
             end;

@@ -21,11 +21,12 @@
          check/3,
          process/3,
          signers/2,
-         version/0,
+         version/1,
          serialization_template/1,
          serialize/1,
          deserialize/2,
-         for_client/1
+         for_client/1,
+         valid_at_protocol/2
         ]).
 
 -export([process_call_from_contract/3]).
@@ -202,9 +203,12 @@ signers(Tx, _) ->
 -spec process(tx(), aec_trees:trees(), aetx_env:env()) -> {ok, aec_trees:trees(), aetx_env:env()}.
 process(#contract_call_tx{} = Tx, Trees, Env) ->
     %% Assert
-    aetx_transaction = aetx_env:context(Env),
+    case aetx_env:context(Env) of
+      aetx_transaction -> ok;
+      aetx_ga          -> ok
+    end,
     Instructions =
-        aec_tx_processor:contract_call_tx_instructions(
+        aeprimop:contract_call_tx_instructions(
           caller_pubkey(Tx),
           contract_pubkey(Tx),
           call_data(Tx),
@@ -216,7 +220,7 @@ process(#contract_call_tx{} = Tx, Trees, Env) ->
           call_origin(Tx),
           fee(Tx),
           nonce(Tx)),
-    aec_tx_processor:eval(Instructions, Trees, Env).
+    aeprimop:eval(Instructions, Trees, Env).
 
 -spec process_call_from_contract(tx(), aec_trees:trees(), aetx_env:env()) ->
                                         {ok, aect_call:call(), aec_trees:trees()}
@@ -225,7 +229,7 @@ process_call_from_contract(#contract_call_tx{} = Tx, Trees, Env) ->
     %% Assert
     aetx_contract = aetx_env:context(Env),
     Instructions =
-        aec_tx_processor:contract_call_from_contract_instructions(
+        aeprimop:contract_call_from_contract_instructions(
           caller_pubkey(Tx),
           contract_pubkey(Tx),
           call_data(Tx),
@@ -237,7 +241,7 @@ process_call_from_contract(#contract_call_tx{} = Tx, Trees, Env) ->
           call_origin(Tx),
           fee(Tx),
           nonce(Tx)),
-    aec_tx_processor:eval_with_return(Instructions, Trees, Env).
+    aeprimop:eval_with_return(Instructions, Trees, Env).
 
 serialize(#contract_call_tx{caller_id   = CallerId,
                             nonce       = Nonce,
@@ -248,11 +252,11 @@ serialize(#contract_call_tx{caller_id   = CallerId,
                             amount      = Amount,
                             gas         = Gas,
                             gas_price   = GasPrice,
-                            call_data   = CallData}) ->
+                            call_data   = CallData} = Tx) ->
     %% Note that the call_stack is not serialized. This is ok since we don't
     %% serialize transactions originating from contract execution, and for
     %% top-level transactions the call_stack is always empty.
-    {version(),
+    {version(Tx),
      [ {caller_id, CallerId}
      , {nonce, Nonce}
      , {contract_id, ContractId}
@@ -304,9 +308,13 @@ serialization_template(?CONTRACT_CALL_TX_VSN) ->
     , {call_data, binary}
     ].
 
--spec version() -> non_neg_integer().
-version() ->
+-spec version(tx()) -> non_neg_integer().
+version(_) ->
     ?CONTRACT_CALL_TX_VSN.
+
+-spec valid_at_protocol(aec_hard_forks:protocol_vsn(), tx()) -> boolean().
+valid_at_protocol(_, _) ->
+    true.
 
 for_client(#contract_call_tx{caller_id   = CallerId,
                              nonce       = Nonce,

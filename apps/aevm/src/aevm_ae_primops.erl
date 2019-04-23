@@ -15,7 +15,7 @@
         ]).
 
 -include_lib("aebytecode/include/aeb_opcodes.hrl").
--include_lib("aecontract/src/aecontract.hrl").
+-include("../../aecontract/include/aecontract.hrl").
 -include("aevm_ae_primops.hrl").
 
 -record(chain, {api, state, abi_version}).
@@ -63,6 +63,8 @@ call_(Gas, Value, Data, StateIn) ->
                 map_call(Gas, PrimOp, Value, Data, StateIn);
             true when ?PRIM_CALL_IN_CRYPTO_RANGE(PrimOp) ->
                 crypto_call(Gas, PrimOp, Value, Data, StateIn);
+            true when ?PRIM_CALL_IN_AUTH_RANGE(PrimOp) ->
+                auth_call(Gas, PrimOp, Value, Data, StateIn);
             true ->
                 ChainIn = #chain{api = aevm_eeevm_state:chain_api(StateIn),
                                  state = aevm_eeevm_state:chain_state(StateIn),
@@ -129,7 +131,7 @@ types(?PRIM_CALL_AENS_RESOLVE, HeapValue, Store,_State) ->
     %% The out type is given in the third argument
     T = {tuple, [word, word, word, typerep]},
     {ok, Bin} = aevm_data:heap_to_binary(T, Store, HeapValue),
-    {ok, {_Prim, _, _, OutType}} = aeso_heap:from_binary(T, Bin),
+    {ok, {_Prim, _, _, OutType}} = aeb_heap:from_binary(T, Bin),
     {[string, string, typerep], aeso_icode:option_typerep(OutType)};
 types(?PRIM_CALL_AENS_REVOKE,_HeapValue,_Store,_State) ->
     {[word, word, sign_t()], tuple0_t()};
@@ -144,7 +146,7 @@ types(?PRIM_CALL_MAP_EMPTY,_HeapValue,_Store,_State) ->
 types(?PRIM_CALL_MAP_GET, HeapValue, Store, State) ->
     T = {tuple, [word, word]},
     {ok, Bin} = aevm_data:heap_to_binary(T, Store, HeapValue),
-    {ok, {_Prim, Id}} = aeso_heap:from_binary(T, Bin),
+    {ok, {_Prim, Id}} = aeb_heap:from_binary(T, Bin),
     {_KeyType, ValType} = aevm_eeevm_maps:map_type(Id, State),
     {[word, word], aeso_icode:option_typerep(ValType)};
 types(?PRIM_CALL_MAP_PUT,_HeapValue,_Store,_State) ->
@@ -154,7 +156,7 @@ types(?PRIM_CALL_MAP_SIZE,_HeapValue,_Store,_State) ->
 types(?PRIM_CALL_MAP_TOLIST, HeapValue, Store, State) ->
     T = {tuple, [word, word]},
     {ok, Bin} = aevm_data:heap_to_binary(T, Store, HeapValue),
-    {ok, {_Prim, Id}} = aeso_heap:from_binary(T, Bin),
+    {ok, {_Prim, Id}} = aeb_heap:from_binary(T, Bin),
     {KeyType, ValType} = aevm_eeevm_maps:map_type(Id, State),
     {[word], {list, {tuple, [KeyType, ValType]}}};
 types(?PRIM_CALL_ORACLE_EXTEND,_HeapValue,_Store,_State) ->
@@ -205,6 +207,8 @@ types(?PRIM_CALL_CRYPTO_SHA256_STRING, _HeapValue, _Store, _State) ->
     {[string], word};
 types(?PRIM_CALL_CRYPTO_BLAKE2B_STRING, _HeapValue, _Store, _State) ->
     {[string], word};
+types(?PRIM_CALL_AUTH_TX_HASH, _HeapValue, _Store, _State) ->
+    {[], aeso_icode:option_typerep(word)};
 types(_, _, _, _) ->
     {[], tuple0_t()}.
 
@@ -223,7 +227,7 @@ oracle_query_type_from_chain(HeapValue, Store, State) ->
 oracle_type_from_chain(HeapValue, Store, State, Which) ->
     T = {tuple, [word, word]},
     {ok, Bin} = aevm_data:heap_to_binary(T, Store, HeapValue),
-    {ok, {_Prim, OracleID}} = aeso_heap:from_binary(T, Bin),
+    {ok, {_Prim, OracleID}} = aeb_heap:from_binary(T, Bin),
     API        = aevm_eeevm_state:chain_api(State),
     ChainState = aevm_eeevm_state:chain_state(State),
     case Which of
@@ -238,7 +242,7 @@ check_type_hash(Op, ArgTypes, OutType, TypeHash) ->
         true ->
             PrimBin = binary:encode_unsigned(Op),
             ArgType = {tuple, ArgTypes},
-            case aeso_abi:function_type_hash(PrimBin, ArgType, OutType) of
+            case aeb_abi:function_type_hash(PrimBin, ArgType, OutType) of
                 TypeHash -> ok;
                 _Other -> error
             end
@@ -284,7 +288,7 @@ call_chain1(Callback, State) ->
 query_chain(Callback, State) ->
     case call_chain1(Callback, State) of
         {ok, Res} ->
-            Return = {ok, aeso_heap:to_binary(Res)},
+            Return = {ok, aeb_heap:to_binary(Res)},
             {ok, Return, State#chain.state};
         {error, _} = Err -> Err
     end.
@@ -300,7 +304,7 @@ cast_chain(Callback, State) ->
 call_chain(Callback, State) ->
     case call_chain1(Callback, State) of
         {ok, Retval, ChainState1} ->
-            Return     = {ok, aeso_heap:to_binary(Retval)},
+            Return     = {ok, aeb_heap:to_binary(Retval)},
             {ok, Return, ChainState1};
         {error, _} = Err -> Err
     end.
@@ -502,6 +506,28 @@ aens_call_revoke(Data, #chain{api = API, state = State} = Chain) ->
         {error, _} = Err -> Err
     end.
 
+%% ------------------------------------------------------------------
+%% Auth operations.
+%% ------------------------------------------------------------------
+auth_call(Gas, Op, _Value, Data, State) ->
+    case {aevm_eeevm_state:vm_version(State), Op} of
+        {VMVersion, _} when ?IS_AEVM_SOPHIA(VMVersion), VMVersion >= ?VM_AEVM_SOPHIA_3 ->
+            auth_call(Gas, Op, Data, State);
+        {_, _} -> {error, out_of_gas}
+    end.
+
+auth_call(Gas, ?PRIM_CALL_AUTH_TX_HASH, Data, State) ->
+    auth_call_tx_hash(Gas, Data, State);
+auth_call(_, _, _, _) ->
+    {error, out_of_gas}.
+
+auth_call_tx_hash(_Gas, _Data, State) ->
+    Res =
+        case aevm_eeevm_state:auth_tx_hash(State) of
+            undefined      -> {ok, aeb_heap:to_binary(none)};
+            <<TxHash:256>> -> {ok, aeb_heap:to_binary({some, TxHash})}
+        end,
+    {ok, Res, aec_governance:primop_base_gas(?PRIM_CALL_AUTH_TX_HASH), State}.
 
 %% ------------------------------------------------------------------
 %% Crypto operations.
@@ -510,7 +536,7 @@ crypto_call(Gas, Op, _Value, Data, State) ->
     case aevm_eeevm_state:vm_version(State) of
         ?VM_AEVM_SOPHIA_1 ->
             {error, out_of_gas};
-        VMVersion when ?IS_VM_SOPHIA(VMVersion), VMVersion >= ?VM_AEVM_SOPHIA_2 ->
+        VMVersion when ?IS_AEVM_SOPHIA(VMVersion), VMVersion >= ?VM_AEVM_SOPHIA_2 ->
             crypto_call(Gas, Op, Data, State)
     end.
 
@@ -596,7 +622,7 @@ map_call_get(Gas, Data, State) ->
     case aevm_eeevm_state:heap_to_binary(KeyType, KeyPtr, State) of
         {ok, KeyBin, GasUsed} ->
             Res = case aevm_eeevm_maps:get(MapId, KeyBin, State) of
-                    false -> aeso_heap:to_binary(none);
+                    false -> aeb_heap:to_binary(none);
                     <<ValPtr:256, ValBin/binary>> ->
                         %% Some hacky juggling to build an option value.
                         NewPtr = 32 + byte_size(ValBin),
@@ -615,8 +641,8 @@ map_call_put(Gas, Data, State) ->
         {ok, KeyBin, GasUsed} ->
             case aevm_eeevm_state:heap_to_heap(ValType, ValPtr, State) of
                 {ok, HeapVal, GasUsed1} ->
-                    ValBin = <<(aeso_heap:heap_value_pointer(HeapVal)):256,
-                               (aeso_heap:heap_value_heap(HeapVal))/binary>>,
+                    ValBin = <<(aeb_heap:heap_value_pointer(HeapVal)):256,
+                               (aeb_heap:heap_value_heap(HeapVal))/binary>>,
                     {NewMapId, State1}  = aevm_eeevm_maps:put(MapId, KeyBin, ValBin, State),
                     {ok, {ok, <<NewMapId:256>>}, GasUsed + GasUsed1, State1};
                 {error, _} = Err ->
@@ -659,13 +685,13 @@ build_heap_list(Maps, KeyType, ValType, [{K, V} | KVs], Offs, Acc) ->
     KeyPtr       = HeadPtr + 64,
     NextId       = 0,   %% There are no maps in map keys
     {ok, KeyVal} = aevm_data:binary_to_heap(KeyType, K, NextId, KeyPtr),
-    KeyBin       = aeso_heap:heap_value_heap(KeyVal),
-    KeyPtr1      = aeso_heap:heap_value_pointer(KeyVal),
+    KeyBin       = aeb_heap:heap_value_heap(KeyVal),
+    KeyPtr1      = aeb_heap:heap_value_pointer(KeyVal),
     ValPtr       = KeyPtr + byte_size(KeyBin),
     <<VP:256, VB/binary>> = V,
-    {ok, ValVal} = aevm_data:heap_to_heap(ValType, aeso_heap:heap_value(Maps, VP, VB, 32), ValPtr),
-    ValPtr1      = aeso_heap:heap_value_pointer(ValVal),
-    ValBin       = aeso_heap:heap_value_heap(ValVal),
+    {ok, ValVal} = aevm_data:heap_to_heap(ValType, aeb_heap:heap_value(Maps, VP, VB, 32), ValPtr),
+    ValPtr1      = aeb_heap:heap_value_pointer(ValVal),
+    ValBin       = aeb_heap:heap_value_heap(ValVal),
     TailPtr      =
         case KVs of
             [] -> -1;
@@ -682,12 +708,12 @@ build_heap_list(Maps, KeyType, ValType, [{K, V} | KVs], Offs, Acc) ->
 %% ------------------------------------------------------------------
 
 get_primop(Data) ->
-    {ok, T} = aeso_heap:from_binary({tuple, [word]}, Data),
+    {ok, T} = aeb_heap:from_binary({tuple, [word]}, Data),
     {PrimOp} = T,
     PrimOp.
 
 get_args(Types, Data) ->
-    {ok, V} = aeso_heap:from_binary({tuple, [word | Types]}, Data),
+    {ok, V} = aeb_heap:from_binary({tuple, [word | Types]}, Data),
     [_ | Args] = tuple_to_list(V),
     Args.
 

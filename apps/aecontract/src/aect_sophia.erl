@@ -7,9 +7,9 @@
 
 -module(aect_sophia).
 
--include("aecontract.hrl").
--include_lib("apps/aecore/include/blocks.hrl").
--include_lib("aecontract/include/hard_forks.hrl").
+-include("../include/aecontract.hrl").
+-include("../../aecore/include/blocks.hrl").
+-include("../../aecontract/include/hard_forks.hrl").
 
 -export([ compile/2
         , decode_data/2
@@ -153,7 +153,7 @@ encode_call_data(Code, Function, Arguments) ->
 decode_data(Type, Data) ->
     case get_type(Type) of
         {ok, SophiaType} ->
-            try aeso_heap:from_binary(SophiaType, Data) of
+            try aeb_heap:from_binary(SophiaType, Data) of
                 {ok, Term} ->
                     try prepare_for_json(SophiaType, Term) of
                         R -> {ok, R}

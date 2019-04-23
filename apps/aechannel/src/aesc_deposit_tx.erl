@@ -21,11 +21,12 @@
          check/3,
          process/3,
          signers/2,
-         version/0,
+         version/1,
          serialization_template/1,
          serialize/1,
          deserialize/2,
-         for_client/1
+         for_client/1,
+         valid_at_protocol/2
         ]).
 
 % aesc_signable_transaction callbacks
@@ -142,7 +143,7 @@ check(#channel_deposit_tx{}, Trees,_Env) ->
 -spec process(tx(), aec_trees:trees(), aetx_env:env()) -> {ok, aec_trees:trees(), aetx_env:env()}.
 process(#channel_deposit_tx{} = Tx, Trees, Env) ->
     Instructions =
-        aec_tx_processor:channel_deposit_tx_instructions(
+        aeprimop:channel_deposit_tx_instructions(
           from_pubkey(Tx),
           channel_pubkey(Tx),
           amount(Tx),
@@ -150,7 +151,7 @@ process(#channel_deposit_tx{} = Tx, Trees, Env) ->
           round(Tx),
           fee(Tx),
           nonce(Tx)),
-    aec_tx_processor:eval(Instructions, Trees, Env).
+    aeprimop:eval(Instructions, Trees, Env).
 
 -spec signers(tx(), aec_trees:trees()) -> {ok, list(aec_keys:pubkey())}
                                         | {error, channel_not_found}.
@@ -171,8 +172,8 @@ serialize(#channel_deposit_tx{channel_id  = ChannelId,
                               fee         = Fee,
                               state_hash  = StateHash,
                               round       = Round,
-                              nonce       = Nonce}) ->
-    {version(),
+                              nonce       = Nonce} = Tx) ->
+    {version(Tx),
      [ {channel_id  , ChannelId}
      , {from_id     , FromId}
      , {amount      , Amount}
@@ -242,13 +243,13 @@ updates(#channel_deposit_tx{from_id = FromId, amount = Amount}) ->
 round(#channel_deposit_tx{round = Round}) ->
     Round.
 
-%%%===================================================================
-%%% Internal functions
-%%%===================================================================
-
--spec version() -> non_neg_integer().
-version() ->
+-spec version(tx()) -> non_neg_integer().
+version(_) ->
     ?CHANNEL_DEPOSIT_TX_VSN.
+
+-spec valid_at_protocol(aec_hard_forks:protocol_vsn(), tx()) -> boolean().
+valid_at_protocol(_, _) ->
+    true.
 
 %%%===================================================================
 %%% Test setters 

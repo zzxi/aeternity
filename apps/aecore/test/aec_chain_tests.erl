@@ -10,7 +10,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -include_lib("aeminer/include/aeminer.hrl").
--include_lib("aecontract/src/aecontract.hrl").
+-include("../../aecontract/include/aecontract.hrl").
 -include_lib("aecore/include/blocks.hrl").
 -include_lib("aecontract/include/hard_forks.hrl").
 
@@ -1767,7 +1767,6 @@ hard_fork_inserts_new_accounts() ->
     ok.
 
 meck_minerva_fork_height(Height) ->
-    Version = aec_hard_forks:protocol_effective_at_height(Height),
     meck:expect(aec_hard_forks, is_fork_height,
                 fun(H) ->
                     case H =:= Height of

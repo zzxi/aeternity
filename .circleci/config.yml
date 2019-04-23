@@ -109,14 +109,14 @@ references:
     restore_cache:
       key: *build_cache_key
 
-  machine_build_cache_key: &machine_build_cache_key machine-build-cache-v4-{{ .Branch }}-{{ .Revision }}
+  machine_build_cache_key: &machine_build_cache_key machine-build-cache-v5-{{ .Branch }}-{{ .Revision }}
   restore_machine_build_cache: &restore_machine_build_cache
     restore_cache:
       keys:
         - *machine_build_cache_key
-        - machine-build-cache-v4-{{ .Branch }}-
-        - machine-build-cache-v4-master-
-        - machine-build-cache-v4-
+        - machine-build-cache-v5-{{ .Branch }}-
+        - machine-build-cache-v5-master-
+        - machine-build-cache-v5-
 
   save_machine_build_cache: &save_machine_build_cache
     save_cache:
@@ -167,19 +167,19 @@ references:
         epmd -daemon
         make python-env
         mkdir ${PACKAGE_TESTS_DIR:?}
-        make python-package-win32-test python-release-test WORKDIR=${PACKAGE_TESTS_DIR:?} TARBALL=${PACKAGE_TARBALL:?}
+        make python-package-win32-test python-release-test WORKDIR=${PACKAGE_TESTS_DIR:?} PACKAGE=${PACKAGE_TARBALL:?}
 
   store_package_artifacts: &store_package_artifacts
     store_artifacts:
       path: *packages_workspace
       destination: /
 
+
   upload_release_artifacts: &upload_release_artifacts
     run:
       name: Upload release artifacts to central repository (AWS)
       command: |
         aws s3 cp --acl public-read ${PACKAGE_TARBALL:?} s3://${S3_RELEASES_BUCKET:?}/
-        aws s3 cp --acl public-read ${PACKAGE_TARBALL:?} s3://${S3_RELEASES_BUCKET:?}/aeternity-latest-${PKG_SUFFIX:?}.tar.gz
 
   setup_secrets: &setup_secrets
     run:
@@ -265,13 +265,13 @@ references:
     run:
       name: Build latest docker image
       command: |
-        IMAGE_TAG=${CIRCLE_BRANCH:?} docker-compose build node1
+        IMAGE_TAG=${CIRCLE_BRANCH/\//_} docker-compose build node1
 
   docker_compose_start: &docker_compose_start
     run:
       name: Create localnet with docker-compose
       command: |
-        sudo -u ubuntu -E -H IMAGE_TAG=${CIRCLE_BRANCH:?} docker-compose up -d
+        sudo -u ubuntu -E -H IMAGE_TAG=${CIRCLE_BRANCH/\//_} docker-compose up -d
 
   docker_compose_healthcheck: &docker_compose_healthcheck
     run:
@@ -364,6 +364,18 @@ references:
       - *upload_github_release_asset
       - *upload_release_artifacts
 
+  upload_latest_artifacts: &upload_latest_artifacts
+    - checkout
+    - *set_package_path
+    - *setup_secrets
+    - attach_workspace:
+        at: *packages_workspace
+    - run:
+        name: Upload build artifacts to central repository (AWS)
+        command: |
+          aws s3 cp --acl public-read ${PACKAGE_TARBALL:?} s3://${S3_RELEASES_BUCKET:?}/aeternity-latest-${PKG_SUFFIX:?}.tar.gz
+    - *fail_notification
+
 jobs:
   build:
     executor: builder_container_stable
@@ -416,6 +428,14 @@ jobs:
       - MAKE_TARGET: ct-mnesia-leveled
     steps: *test_steps
 
+  test_mnesia_rocksdb:
+    executor: builder_container_stable
+    <<: *container_config
+    parallelism: 2
+    environment:
+      - MAKE_TARGET: ct-mnesia-rocksdb
+    steps: *test_steps
+
   eunit:
     executor: builder_container_stable
     <<: *container_config
@@ -437,13 +457,6 @@ jobs:
       - MAKE_TARGET: eunit-fortuna
     steps: *eunit_steps
 
-  eunit_mnesia_leveled:
-    executor: builder_container_stable
-    <<: *container_config
-    environment:
-      - MAKE_TARGET: eunit-mnesia-leveled
-    steps: *eunit_steps
-
   aevm_tests:
     executor: builder_container_stable
     <<: *container_config
@@ -462,6 +475,7 @@ jobs:
     <<: *container_config
     steps:
       - checkout
+      - run: make dockerignore-check
       - *restore_rebar_cache
       - *restore_build_cache
       - run: ./rebar3 edoc
@@ -655,8 +669,23 @@ jobs:
           name: Push Docker image to DockerHub
           command: |
             docker login -u $DOCKER_USER -p $DOCKER_PASS
-            docker push ${DOCKERHUB_REPO:?}:${CIRCLE_BRANCH:?}
+            docker push ${DOCKERHUB_REPO:?}:${CIRCLE_BRANCH/\//_}
       - *fail_notification
+
+  docker_push_latest:
+    executor: infrastructure_container_stable
+    <<: *infrastructure_config
+    steps:
+      - checkout
+      - *setup_secrets
+      - *setup_remote_docker
+      - run:
+          name: Build and push Docker image to DockerHub
+          command: |
+            docker login -u $DOCKER_USER -p $DOCKER_PASS
+            docker pull ${DOCKERHUB_REPO:?}:${CIRCLE_TAG:?}
+            docker tag ${DOCKERHUB_REPO:?}:${CIRCLE_TAG:?} ${DOCKERHUB_REPO:?}:latest
+            docker push ${DOCKERHUB_REPO:?}:latest
 
   docker_push_tag:
     executor: infrastructure_container_stable
@@ -669,9 +698,8 @@ jobs:
           name: Build and push Docker image to DockerHub
           command: |
             docker login -u $DOCKER_USER -p $DOCKER_PASS
-            docker build -t ${DOCKERHUB_REPO:?}:${CIRCLE_TAG:?} -t ${DOCKERHUB_REPO:?}:latest .
+            docker build -t ${DOCKERHUB_REPO:?}:${CIRCLE_TAG:?} .
             docker push ${DOCKERHUB_REPO:?}:${CIRCLE_TAG:?}
-            docker push ${DOCKERHUB_REPO:?}:latest
 
   docker_system_tests:
     <<: *machine_config
@@ -791,6 +819,33 @@ jobs:
       <<: *infrastructure_config_environment
       PKG_TARGET_OS: ubuntu
 
+  upload_latest_packages_osx:
+    executor: infrastructure_container_stable
+    <<: *infrastructure_config
+    environment:
+      <<: *infrastructure_config_environment
+      PKG_TARGET_OS: macos
+    steps: *upload_latest_artifacts
+
+  upload_latest_packages_linux:
+    executor: infrastructure_container_stable
+    <<: *infrastructure_config
+    environment:
+      <<: *infrastructure_config_environment
+      PKG_TARGET_OS: ubuntu
+    steps: *upload_latest_artifacts
+
+
+  verify_release_artifacts:
+    executor: infrastructure_container_stable
+    <<: *infrastructure_config
+    working_directory: /infrastructure
+    steps:
+      - run:
+          name: Verify release artifacts
+          command: |
+            ./scripts/check_release_artifacts.sh ${CIRCLE_TAG}
+
 # CircleCI skips a job for a tag by default.
 # A job must have a filters tags section to run as a part of a tag push
 # and all its transitively dependent jobs must also have a filters tags section.
@@ -816,17 +871,6 @@ workflows:
                 - env/dev2
                 - system-tests
                 - master
-
-      - deploy_api_docs:
-          requires:
-            - static_analysis
-            - rebar_lock_check
-            - hodl_green
-          filters:
-            branches:
-              ignore: /.*/
-            tags:
-              only: *stable_tag_regex
 
       - docker_system_smoke_tests:
           requires:
@@ -878,6 +922,16 @@ workflows:
                 - env/dev2
                 - system-tests
 
+      - test_mnesia_rocksdb:
+          requires:
+            - build
+          filters:
+            branches:
+              ignore:
+                - env/dev1
+                - env/dev2
+                - system-tests
+
       - eunit:
           requires:
             - build
@@ -903,18 +957,6 @@ workflows:
               only: *tag_regex
 
       - eunit_fortuna:
-          requires:
-            - build
-          filters:
-            branches:
-              ignore:
-                - env/dev1
-                - env/dev2
-                - system-tests
-            tags:
-              only: *tag_regex
-
-      - eunit_mnesia_leveled:
           requires:
             - build
           filters:
@@ -1023,10 +1065,10 @@ workflows:
             - test_roma
             - test_fortuna
             - test_mnesia_leveled
+            - test_mnesia_rocksdb
             - eunit
             - eunit_roma
             - eunit_fortuna
-            - eunit_mnesia_leveled
             - aevm_tests
             - uat_tests
             - static_analysis
@@ -1042,10 +1084,10 @@ workflows:
             - test_roma
             - test_fortuna
             - test_mnesia_leveled
+            - test_mnesia_rocksdb
             - eunit
             - eunit_roma
             - eunit_fortuna
-            - eunit_mnesia_leveled
             - aevm_tests
             - uat_tests
             - static_analysis
@@ -1061,10 +1103,10 @@ workflows:
             - test_roma
             - test_fortuna
             - test_mnesia_leveled
+            - test_mnesia_rocksdb
             - eunit
             - eunit_roma
             - eunit_fortuna
-            - eunit_mnesia_leveled
             - aevm_tests
             - uat_tests
             - static_analysis
@@ -1117,7 +1159,6 @@ workflows:
             - eunit
             - eunit_roma
             - eunit_fortuna
-            - eunit_mnesia_leveled
             - static_analysis
             - rebar_lock_check
             - linux_package
@@ -1143,7 +1184,6 @@ workflows:
             - eunit
             - eunit_roma
             - eunit_fortuna
-            - eunit_mnesia_leveled
             - static_analysis
             - rebar_lock_check
             - linux_package
@@ -1159,7 +1199,6 @@ workflows:
             - eunit
             - eunit_roma
             - eunit_fortuna
-            - eunit_mnesia_leveled
             - static_analysis
             - rebar_lock_check
             - osx_package
@@ -1175,10 +1214,70 @@ workflows:
             - eunit
             - eunit_roma
             - eunit_fortuna
-            - eunit_mnesia_leveled
             - static_analysis
             - rebar_lock_check
             - hodl_artefact_upload
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: *stable_tag_regex
+
+      - hodl_latest:
+          type: approval
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: *stable_tag_regex
+
+      - upload_latest_packages_linux:
+          requires:
+            - linux_package
+            - hodl_latest
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: *stable_tag_regex
+
+      - upload_latest_packages_osx:
+          requires:
+            - osx_package
+            - hodl_latest
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: *stable_tag_regex
+
+      - deploy_api_docs:
+          requires:
+            - hodl_latest
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: *stable_tag_regex
+
+      - docker_push_latest:
+          requires:
+            - hodl_latest
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: *stable_tag_regex
+
+      - verify_release_artifacts:
+          requires:
+            - upload_build_artifacts
+            - upload_packages_linux
+            - upload_latest_packages_linux
+            - upload_packages_osx
+            - upload_latest_packages_osx
+            - docker_push_tag
+            - docker_push_latest
           filters:
             branches:
               ignore: /.*/

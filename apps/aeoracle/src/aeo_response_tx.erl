@@ -21,11 +21,12 @@
          check/3,
          process/3,
          signers/2,
-         version/0,
+         version/1,
          serialization_template/1,
          serialize/1,
          deserialize/2,
-         for_client/1
+         for_client/1,
+         valid_at_protocol/2
         ]).
 
 %% Additional getters
@@ -128,13 +129,13 @@ signers(#oracle_response_tx{} = Tx, _) ->
 process(#oracle_response_tx{} = RTx, Trees, Env) ->
     {delta, RTTL} = response_ttl(RTx),
     Instructions =
-        aec_tx_processor:oracle_response_tx_instructions(oracle_pubkey(RTx),
+        aeprimop:oracle_response_tx_instructions(oracle_pubkey(RTx),
                                                          query_id(RTx),
                                                          response(RTx),
                                                          RTTL,
                                                          fee(RTx),
                                                          nonce(RTx)),
-    aec_tx_processor:eval(Instructions, Trees, Env).
+    aeprimop:eval(Instructions, Trees, Env).
 
 serialize(#oracle_response_tx{oracle_id    = OracleId,
                               nonce        = Nonce,
@@ -142,8 +143,8 @@ serialize(#oracle_response_tx{oracle_id    = OracleId,
                               response     = Response,
                               response_ttl = {?ttl_delta_atom, ResponseTTLValue},
                               fee          = Fee,
-                              ttl          = TTL}) ->
-    {version(),
+                              ttl          = TTL} = Tx) ->
+    {version(Tx),
     [ {oracle_id, OracleId}
     , {nonce, Nonce}
     , {query_id, QueryId}
@@ -183,9 +184,13 @@ serialization_template(?ORACLE_RESPONSE_TX_VSN) ->
     , {ttl, int}
     ].
 
--spec version() -> non_neg_integer().
-version() ->
+-spec version(tx()) -> non_neg_integer().
+version(_) ->
     ?ORACLE_RESPONSE_TX_VSN.
+
+-spec valid_at_protocol(aec_hard_forks:protocol_vsn(), tx()) -> boolean().
+valid_at_protocol(_, _) ->
+    true.
 
 for_client(#oracle_response_tx{oracle_id = OracleId,
                                nonce     = Nonce,

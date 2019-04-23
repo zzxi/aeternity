@@ -13,6 +13,7 @@
         , add_trace/2
         , add_callcreates/2
         , address/1
+        , auth_tx_hash/1
         , blockhash/2
         , bloom/2
         , calldepth/1
@@ -74,7 +75,7 @@
         , vm_version/1
         ]).
 
--include_lib("aecontract/src/aecontract.hrl").
+-include_lib("../../aecontract/include/aecontract.hrl").
 -include_lib("aebytecode/include/aeb_opcodes.hrl").
 -include("aevm_eeevm.hrl").
 
@@ -129,6 +130,7 @@ init(#{ env  := Env
          , gas_limit  => maps:get(currentGasLimit, Env)
          , number     => maps:get(currentNumber, Env)
          , timestamp  => maps:get(currentTimestamp, Env)
+         , auth_tx_hash => maps:get(authTxHash, Env, undefined)
 
          , ext_code_blocks => get_ext_code_blocks(Pre)
          , ext_code_sizes  => get_ext_code_sizes(Pre)
@@ -179,9 +181,9 @@ init_vm(State, Code, Mem, Store, CallDataType, OutType) ->
         ?VM_AEVM_SOLIDITY_1 ->
             aevm_eeevm_store:init(Store, State1);
         VmVersion when (CallDataType =:= undefined orelse OutType =:= undefined)
-                       andalso ?IS_VM_SOPHIA(VmVersion) ->
+                       andalso ?IS_AEVM_SOPHIA(VmVersion) ->
             error({bad_vm_setup, missing_call_data_type});
-        VmVersion when ?IS_VM_SOPHIA(VmVersion) ->
+        VmVersion when ?IS_AEVM_SOPHIA(VmVersion) ->
             case is_reentrant_call(State) of
                 true -> %% Sophia doesn't allow reentrant calls
                     init_error(reentrant_call);
@@ -225,14 +227,14 @@ import_state_from_store(Store, State0) ->
             %% The state value in the store already has the correct offset (32),
             %% so no need to translate it.
             StateValue = aevm_eeevm_store:get_sophia_state(Store),
-            32 = aeso_heap:heap_value_offset(StateValue),
+            32 = aeb_heap:heap_value_offset(StateValue),
             {StatePtr, State1} = write_heap_value(StateValue, State),
             aevm_eeevm_memory:store(0, StatePtr, State1)
     end.
 
 do_return(Us0, Us1, State) ->
     case vm_version(State) of
-        VMV when ?IS_VM_SOPHIA(VMV) ->
+        VMV when ?IS_AEVM_SOPHIA(VMV) ->
             %% In Sophia Us1 is a pointer to the actual value.
             %% The type of the value is in the state (from meta data)
             Type = out_type(State),
@@ -251,7 +253,7 @@ do_return(Us0, Us1, State) ->
 do_revert(Us0, Us1, State0) ->
     %% Us0 is a pointer to the revert string binary and Us1 is its size.
     case vm_version(State0) of
-        VMV when ?IS_VM_SOPHIA(VMV) ->
+        VMV when ?IS_AEVM_SOPHIA(VMV) ->
             %% In Sophia Us1 is a pointer to the actual value.
             %% The type of the value is always string.
             case heap_to_binary(string, Us1, State0) of
@@ -272,7 +274,7 @@ heap_to_binary(Type, Ptr, State) ->
     Store = storage(State),
     Heap  = mem(State),
     Maps  = maps(State),
-    Value = aeso_heap:heap_value(Maps, Ptr, Heap),
+    Value = aeb_heap:heap_value(Maps, Ptr, Heap),
     MaxWords = aevm_gas:mem_limit_for_gas(gas(State), State),
     case aevm_data:heap_to_binary(Type, Store, Value, MaxWords * 32) of
         {ok, Bin} ->
@@ -293,20 +295,20 @@ heap_to_heap(Type, Ptr, State) ->
     case vm_version(State) of
         ?VM_AEVM_SOPHIA_1 ->
             heap_to_heap(Type, Ptr, State, ?BUGGY_WORD_SIZE_BYTES);
-        VMVersion when ?IS_VM_SOPHIA(VMVersion), VMVersion >= ?VM_AEVM_SOPHIA_2 ->
+        VMVersion when ?IS_AEVM_SOPHIA(VMVersion), VMVersion >= ?VM_AEVM_SOPHIA_2 ->
             heap_to_heap(Type, Ptr, State, ?WORD_SIZE_BYTES)
     end.
 
 %% TODO: Pass ABI version?
 heap_to_heap(Type, Ptr, State, WordSize) ->
-    Value = aeso_heap:heap_value(maps(State), Ptr, mem(State)),
+    Value = aeb_heap:heap_value(maps(State), Ptr, mem(State)),
     heap_to_heap_sized(Type, Value, 32, State, WordSize).
 
 heap_to_heap_sized(Type, Value, Offset, State) ->
     case vm_version(State) of
         ?VM_AEVM_SOPHIA_1 ->
             heap_to_heap_sized(Type, Value, Offset, State, ?BUGGY_WORD_SIZE_BYTES);
-        VMVersion when ?IS_VM_SOPHIA(VMVersion), VMVersion >= ?VM_AEVM_SOPHIA_2 ->
+        VMVersion when ?IS_AEVM_SOPHIA(VMVersion), VMVersion >= ?VM_AEVM_SOPHIA_2 ->
             heap_to_heap_sized(Type, Value, Offset, State, ?WORD_SIZE_BYTES)
     end.
 
@@ -314,7 +316,7 @@ heap_to_heap_sized(Type, Value, Offset, State, WordSize) ->
     MaxWords = aevm_gas:mem_limit_for_gas(gas(State), State),
     case aevm_data:heap_to_heap(Type, Value, Offset, MaxWords * WordSize) of
         {ok, NewValue} ->
-            HeapSizeBytes = byte_size(aeso_heap:heap_value_heap(NewValue)),
+            HeapSizeBytes = byte_size(aeb_heap:heap_value_heap(NewValue)),
             GasUsed = aevm_gas:mem_gas(HeapSizeBytes div ?WORD_SIZE_BYTES, State),
             {ok, NewValue, GasUsed};
         {error, _} = Err ->
@@ -325,7 +327,7 @@ return_contract_call_result(To, Input, Addr,_Size, ReturnData, Type, State) ->
     case vm_version(State) of
         ?VM_AEVM_SOLIDITY_1 ->
             {1, aevm_eeevm_memory:write_area(Addr, ReturnData, State)};
-        VMV when ?IS_VM_SOPHIA(VMV) ->
+        VMV when ?IS_AEVM_SOPHIA(VMV) ->
             %% For Sophia, ignore the Addr and put the result on the
             %% top of the heap
             HeapSize = aevm_eeevm_memory:size_in_words(State) * 32,
@@ -333,7 +335,7 @@ return_contract_call_result(To, Input, Addr,_Size, ReturnData, Type, State) ->
                 true ->
                     %% Local primops (like map primops) return heap values
                     <<Ptr:256, Bin/binary>> = ReturnData,
-                    HeapVal = aeso_heap:heap_value(maps(State), Ptr, Bin, 32),
+                    HeapVal = aeb_heap:heap_value(maps(State), Ptr, Bin, 32),
                     case heap_to_heap_sized(Type, HeapVal, HeapSize, State) of
                         {ok, Out, _} ->
                             write_heap_value(Out, State);
@@ -367,7 +369,7 @@ save_store(#{ chain_state := ChainState
         ?VM_AEVM_SOLIDITY_1 ->
             Store = aevm_eeevm_store:to_binary(State),
             {ok, State#{ chain_state => ChainAPI:set_store(Store, ChainState)}};
-        VMV when ?IS_VM_SOPHIA(VMV) ->
+        VMV when ?IS_AEVM_SOPHIA(VMV) ->
             %% A typerep for the state type is on top of the stack, and the state
             %% pointer is at address 0.
             {Addr, _} = aevm_eeevm_memory:load(0, State),
@@ -399,7 +401,7 @@ get_contract_call_input(Target, IOffset, ISize, State) ->
         ?VM_AEVM_SOLIDITY_1 ->
             {Arg, State1} = aevm_eeevm_memory:get_area(IOffset, ISize, State),
             {Arg, undefined, State1};
-        VMVersion when ?IS_VM_SOPHIA(VMVersion) ->
+        VMVersion when ?IS_AEVM_SOPHIA(VMVersion) ->
             %% In Sophia:
             %%   ISize is the (integer) type hash for primops that needs to be
             %%         type checked (otherwise 0).
@@ -410,12 +412,12 @@ get_contract_call_input(Target, IOffset, ISize, State) ->
             ChainAPI   = chain_api(State),
             ChainState = chain_state(State),
             Store      = storage(State),
-            HeapValue  = aeso_heap:heap_value(maps(State), ArgPtr, Heap),
+            HeapValue  = aeb_heap:heap_value(maps(State), ArgPtr, Heap),
             GetFstWord =
                 fun() ->
                     case aevm_data:heap_to_binary({tuple, [word]}, Store, HeapValue) of
                         {ok, Bin} ->
-                            case aeso_heap:from_binary({tuple, [word]}, Bin) of
+                            case aeb_heap:from_binary({tuple, [word]}, Bin) of
                                 {ok, {Val}}   -> {ok, Val};
                                 {error, _Err} -> aevm_eeevm:eval_error(out_of_gas)
                             end;
@@ -462,19 +464,19 @@ get_contract_call_input(Target, IOffset, ISize, State) ->
             end
     end.
 
--spec write_heap_value(aeso_heap:heap_value(), state()) -> {non_neg_integer(), state()}.
+-spec write_heap_value(aeb_heap:heap_value(), state()) -> {non_neg_integer(), state()}.
 write_heap_value(HeapValue, State) ->
-    Ptr    = aeso_heap:heap_value_pointer(HeapValue),
-    Mem    = aeso_heap:heap_value_heap(HeapValue),
-    Maps   = aeso_heap:heap_value_maps(HeapValue),
-    Offs   = aeso_heap:heap_value_offset(HeapValue),
+    Ptr    = aeb_heap:heap_value_pointer(HeapValue),
+    Mem    = aeb_heap:heap_value_heap(HeapValue),
+    Maps   = aeb_heap:heap_value_maps(HeapValue),
+    Offs   = aeb_heap:heap_value_offset(HeapValue),
     State1 = aevm_eeevm_memory:write_area(Offs, Mem, State),
     State2 = aevm_eeevm_maps:merge(Maps, State1),
     {Ptr, State2}.
 
 call_contract(Caller, Target, CallGas, Value, Data, State) ->
     case vm_version(State) of
-        VMV when ?IS_VM_SOPHIA(VMV), Target == ?PRIM_CALLS_CONTRACT ->
+        VMV when ?IS_AEVM_SOPHIA(VMV), Target == ?PRIM_CALLS_CONTRACT ->
             aevm_ae_primops:call(CallGas, Value, Data, State);
         _ ->
             CallStack  = [Caller | call_stack(State)],
@@ -596,6 +598,7 @@ logs(State)        -> maps:get(logs, State).
 storage(State)     -> maps:get(storage, State).
 value(State)       -> maps:get(value, State).
 timestamp(State)   -> maps:get(timestamp, State).
+auth_tx_hash(State) -> maps:get(auth_tx_hash, State).
 
 do_trace(State)    -> maps:get(do_trace, State).
 trace(State)       -> maps:get(trace, State).

@@ -40,10 +40,10 @@
 -include_lib("common_test/include/ct.hrl").
 -include_lib("stdlib/include/assert.hrl").
 
--include_lib("apps/aecore/include/blocks.hrl").
--include_lib("apps/aeoracle/include/oracle_txs.hrl").
--include_lib("apps/aecontract/src/aecontract.hrl").
--include_lib("apps/aecontract/include/hard_forks.hrl").
+-include("../../aecore/include/blocks.hrl").
+-include("../include/oracle_txs.hrl").
+-include("../../aecontract/include/aecontract.hrl").
+-include("../../aecontract/include/hard_forks.hrl").
 
 -define(GENESIS_HEIGHT, aec_block_genesis:height()).
 
@@ -162,9 +162,9 @@ register_oracle_negative(_Cfg) ->
     {error, bad_abi_version} = aetx:process(RTx7, Trees, aetx_env:set_height(Env, 2)),
 
     %% Test bad format strings
-    ABISophia = #{abi_version => ?ABI_SOPHIA_1,
-                  query_format => aeso_heap:to_binary(word),
-                  response_format => aeso_heap:to_binary(word)
+    ABISophia = #{abi_version => ?ABI_AEVM_SOPHIA_1,
+                  query_format => aeb_heap:to_binary(word),
+                  response_format => aeb_heap:to_binary(word)
                  },
     RTx8 = aeo_test_utils:register_tx(PubKey, ABISophia#{query_format => <<"foo">>}, S1),
     RTx9 = aeo_test_utils:register_tx(PubKey, ABISophia#{response_format => <<"foo">>}, S1),
@@ -455,7 +455,7 @@ query_oracle_negative_dynamic_fee(Cfg) ->
     ok.
 
 query_oracle_type_check(_Cfg) ->
-    RFmt = aeso_heap:to_binary(word),
+    RFmt = aeb_heap:to_binary(word),
     F = fun(QFmt, Query, ABIVersion) ->
                 {OracleKey, S}  = register_oracle([], #{abi_version => ABIVersion,
                                                         query_format => QFmt,
@@ -469,10 +469,10 @@ query_oracle_type_check(_Cfg) ->
                 Tx = aeo_test_utils:query_tx(SenderKey, OracleId, #{query => Query}, S2),
                 aetx:process(Tx, Trees, Env)
         end,
-    Int = aeso_heap:to_binary(1),
-    IntFmt = aeso_heap:to_binary(word),
-    String = aeso_heap:to_binary(<<"foo">>),
-    StringFmt = aeso_heap:to_binary(string),
+    Int = aeb_heap:to_binary(1),
+    IntFmt = aeb_heap:to_binary(word),
+    String = aeb_heap:to_binary(<<"foo">>),
+    StringFmt = aeb_heap:to_binary(string),
     ABI = aect_test_utils:latest_sophia_abi_version(),
     ?assertEqual({error, bad_format}, F(StringFmt, Int, ABI)),
     ?assertEqual({error, bad_format}, F(StringFmt, <<123>>, ABI)),
@@ -540,7 +540,7 @@ query_response_negative(Cfg) ->
 
     %% Test bad query id
     OIO = aeo_state_tree:get_query(OracleKey, ID, aec_trees:oracles(Trees)),
-    BadId = aeo_query:id(aeo_query:set_sender_nonce(42, OIO)),
+    BadId = aeo_query:id(aeo_query:sender_pubkey(OIO), 42, aeo_query:oracle_pubkey(OIO)),
     RTx5 = aeo_test_utils:response_tx(OracleKey, BadId, <<"42">>, S1),
     {error, no_matching_oracle_query} = aetx:process(RTx5, Trees, Env),
 
@@ -635,8 +635,8 @@ query_response_fee_depends_on_response_size(Cfg) ->
     ok.
 
 query_response_type_check(_Cfg) ->
-    QFmt  = aeso_heap:to_binary(string),
-    Query = aeso_heap:to_binary(<<"who?">>),
+    QFmt  = aeb_heap:to_binary(string),
+    Query = aeb_heap:to_binary(<<"who?">>),
     F = fun(RFmt, Resp, ABIVersion) ->
                 RegisterOpts = #{abi_version => ABIVersion,
                                  query_format => QFmt,
@@ -649,10 +649,10 @@ query_response_type_check(_Cfg) ->
                 Tx = aeo_test_utils:response_tx(OracleKey, ID, Resp, S),
                 aetx:process(Tx, Trees, Env)
         end,
-    Int = aeso_heap:to_binary(1),
-    IntFmt = aeso_heap:to_binary(word),
-    String = aeso_heap:to_binary(<<"foo">>),
-    StringFmt = aeso_heap:to_binary(string),
+    Int = aeb_heap:to_binary(1),
+    IntFmt = aeb_heap:to_binary(word),
+    String = aeb_heap:to_binary(<<"foo">>),
+    StringFmt = aeb_heap:to_binary(string),
     ABI = aect_test_utils:latest_sophia_abi_version(),
     ?assertEqual({error, bad_format}, F(StringFmt, Int, ABI)),
     ?assertEqual({error, bad_format}, F(StringFmt, <<123>>, ABI)),

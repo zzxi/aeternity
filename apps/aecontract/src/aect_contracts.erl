@@ -86,6 +86,7 @@
 -type serial_version() :: 0..16#FFFFFFFF.
 -type height() :: non_neg_integer().
 -type vm_usage_type() ::  'call' | 'create' | 'oracle_register'.
+-type ct_nonce() :: non_neg_integer() | binary().
 
 -export_type([ contract/0
              , amount/0
@@ -127,26 +128,32 @@ is_legal_version_at_height(Operation, Version, Height) ->
 
 is_legal_serialization_at_height(?ABI_SOLIDITY_1, _, _Height) ->
     true;
-is_legal_serialization_at_height(?ABI_SOPHIA_1, Vsn, Height) ->
+is_legal_serialization_at_height(?ABI_AEVM_SOPHIA_1, Vsn, Height) ->
     aect_sophia:is_legal_serialization_at_height(Vsn, Height).
 
-is_legal_version_in_protocol(create, #{vm := ?VM_AEVM_SOPHIA_1, abi := ?ABI_SOPHIA_1}, ProtocolVersion) ->
+is_legal_version_in_protocol(create, #{vm := ?VM_AEVM_SOPHIA_1, abi := ?ABI_AEVM_SOPHIA_1}, ProtocolVersion) ->
     case ProtocolVersion of
         ?ROMA_PROTOCOL_VSN    -> true;
         ?MINERVA_PROTOCOL_VSN -> false;
         ?FORTUNA_PROTOCOL_VSN -> false
     end;
-is_legal_version_in_protocol(create, #{vm := ?VM_AEVM_SOPHIA_2, abi := ?ABI_SOPHIA_1}, ProtocolVersion) ->
+is_legal_version_in_protocol(create, #{vm := ?VM_AEVM_SOPHIA_2, abi := ?ABI_AEVM_SOPHIA_1}, ProtocolVersion) ->
     case ProtocolVersion of
         ?ROMA_PROTOCOL_VSN    -> false;
         ?MINERVA_PROTOCOL_VSN -> true;
         ?FORTUNA_PROTOCOL_VSN -> true %% TODO: Revise this before release
     end;
-is_legal_version_in_protocol(create, #{vm := ?VM_AEVM_SOPHIA_3, abi := ?ABI_SOPHIA_1}, ProtocolVersion) ->
+is_legal_version_in_protocol(create, #{vm := ?VM_AEVM_SOPHIA_3, abi := ?ABI_AEVM_SOPHIA_1}, ProtocolVersion) ->
     case ProtocolVersion of
         ?ROMA_PROTOCOL_VSN    -> false;
         ?MINERVA_PROTOCOL_VSN -> false;
         ?FORTUNA_PROTOCOL_VSN -> true
+    end;
+is_legal_version_in_protocol(create, #{vm := ?VM_FATE_SOPHIA_1, abi := ?ABI_FATE_SOPHIA_1}, ProtocolVersion) ->
+    case ProtocolVersion of
+        ?ROMA_PROTOCOL_VSN    -> false;
+        ?MINERVA_PROTOCOL_VSN -> false;
+        ?FORTUNA_PROTOCOL_VSN -> ?VM_FATE_SOPHIA_1_enabled %% TODO: Revise this before release
     end;
 is_legal_version_in_protocol(call, #{vm := VMVersion}, ProtocolVersion) ->
     case ProtocolVersion of
@@ -157,12 +164,13 @@ is_legal_version_in_protocol(call, #{vm := VMVersion}, ProtocolVersion) ->
         ?FORTUNA_PROTOCOL_VSN when VMVersion =:= ?VM_AEVM_SOPHIA_1;
                                    VMVersion =:= ?VM_AEVM_SOPHIA_2;
                                    VMVersion =:= ?VM_AEVM_SOPHIA_3 -> true;
+        ?FORTUNA_PROTOCOL_VSN when VMVersion =:= ?VM_FATE_SOPHIA_1 -> ?VM_FATE_SOPHIA_1_enabled; %% TODO: Revise this before release
         _                     when VMVersion =:= ?VM_AEVM_SOLIDITY_1 -> ?VM_AEVM_SOLIDITY_1_enabled;
         _ -> false
     end;
 is_legal_version_in_protocol(oracle_register, #{abi := ?ABI_NO_VM}, _ProtocolVersion) ->
     true;
-is_legal_version_in_protocol(oracle_register, #{abi := ?ABI_SOPHIA_1}, _ProtocolVersion) ->
+is_legal_version_in_protocol(oracle_register, #{abi := ?ABI_AEVM_SOPHIA_1}, _ProtocolVersion) ->
     true;
 is_legal_version_in_protocol(_, _, _) ->
     false.
@@ -179,7 +187,7 @@ new(RTx) ->
         aect_create_tx:code(RTx),
         aect_create_tx:deposit(RTx)).
 
--spec new(aec_keys:pubkey(), integer(), version(), binary(), amount()) -> contract().
+-spec new(aec_keys:pubkey(), ct_nonce(), version(), binary(), amount()) -> contract().
 %% NOTE: Should only be used for contract execution without transaction
 new(Owner, Nonce, CTVersion, Code, Deposit) ->
     Pubkey = compute_contract_pubkey(Owner, Nonce),
@@ -273,9 +281,10 @@ serialization_template(?CONTRACT_VSN) ->
     , {deposit, int}
     ].
 
--spec compute_contract_pubkey(aec_keys:pubkey(), non_neg_integer()) -> aec_keys:pubkey().
-compute_contract_pubkey(<<_:?PUB_SIZE/binary>> = Owner, Nonce) when Nonce >= 0  ->
-    NonceBin = binary:encode_unsigned(Nonce),
+-spec compute_contract_pubkey(aec_keys:pubkey(), ct_nonce()) -> aec_keys:pubkey().
+compute_contract_pubkey(<<_:?PUB_SIZE/binary>> = Owner, Nonce) when is_integer(Nonce), Nonce >= 0  ->
+    aec_hash:hash(pubkey, <<Owner/binary, (binary:encode_unsigned(Nonce))/binary>>);
+compute_contract_pubkey(<<_:?PUB_SIZE/binary>> = Owner, <<_:?HASH_SIZE/binary>> = NonceBin) ->
     aec_hash:hash(pubkey, <<Owner/binary, NonceBin/binary>>).
 
 -spec compute_contract_store_id(aec_keys:pubkey()) -> store_id().
@@ -467,11 +476,12 @@ assert_field_store(store_v, X,_Version) when is_binary(X) -> X.
 
 is_legal_version(#{vm := VM, abi := ABI}) ->
     case {VM, ABI} of
-        {?VM_AEVM_SOPHIA_1,   ?ABI_SOPHIA_1}   -> true;
-        {?VM_AEVM_SOPHIA_2,   ?ABI_SOPHIA_1}   -> true;
-        {?VM_AEVM_SOPHIA_3,   ?ABI_SOPHIA_1}   -> true;
-        {?VM_AEVM_SOLIDITY_1, ?ABI_SOLIDITY_1} -> ?VM_AEVM_SOLIDITY_1_enabled;
-        _                                      -> false
+        {?VM_AEVM_SOPHIA_1,   ?ABI_AEVM_SOPHIA_1} -> true;
+        {?VM_AEVM_SOPHIA_2,   ?ABI_AEVM_SOPHIA_1} -> true;
+        {?VM_AEVM_SOPHIA_3,   ?ABI_AEVM_SOPHIA_1} -> true;
+        {?VM_FATE_SOPHIA_1,   ?ABI_FATE_SOPHIA_1} -> ?VM_FATE_SOPHIA_1_enabled;
+        {?VM_AEVM_SOLIDITY_1, ?ABI_SOLIDITY_1}    -> ?VM_AEVM_SOLIDITY_1_enabled;
+        _                                         -> false
     end.
 
 -spec split_vm_abi(serial_version()) -> version().

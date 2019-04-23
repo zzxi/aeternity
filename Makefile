@@ -13,12 +13,34 @@ ST_CT_FLAGS = --logdir system_test/logs
 ST_CT_DIR = --dir system_test/common
 ST_CT_LOCALDIR = --dir system_test/only_local
 
-SWAGGER_CODEGEN_CLI_V = 2.3.1
+SWAGGER_CODEGEN_CLI_V = 2.4.4
 SWAGGER_CODEGEN_CLI = swagger/swagger-codegen-cli-$(SWAGGER_CODEGEN_CLI_V).jar
 SWAGGER_CODEGEN = java -jar $(SWAGGER_CODEGEN_CLI)
 SWAGGER_ENDPOINTS_SPEC = apps/aeutils/src/endpoints.erl
 
 PACKAGE_SPEC_WIN32 ?= ../ci/appveyor/package.cfg
+
+# Packages from master MUST be pre-releases. Git master version
+# usually is higher then the last stable release. However
+# packages with newer stable version MUST always have higher version
+# than master in Debian/Ubuntu packaging context. The only way to
+# achieve this is when master packages are a pre-release (
+# pkg-name_version~unique_higher_number ).
+
+# Additionally the same (as in name) package from master for the same
+# unreleased/not stable version (i.e. builds) MUST always have higher
+# version (i.e. pre-release). Otherwise package managers and repository management
+# software complain.
+AE_DEB_PKG_VERSION ?= `cat VERSION`
+AE_DEB_DCH_REL_NOTE= \
+"Release notes are available in /usr/share/doc/aeternity-node/docs/release-notes/RELEASE-NOTES-`cat VERSION`.md"
+
+AE_DEB_PKG_NAME="aeternity-node"
+AE_DEB_MAINT_EMAIL="info@aeternity.com"
+AE_DEB_MAINT_NAME="Aeternity Team"
+DEB_PKG_CHANGELOG_FILE=debian/changelog
+
+
 
 all:	local-build
 
@@ -179,41 +201,29 @@ dialyzer: $(SWAGGER_ENDPOINTS_SPEC)
 	@$(REBAR) dialyzer
 
 ct: KIND=test
-ct: internal-build
-	@NODE_PROCESSES="$$(ps -fea | grep bin/aeternity | grep -v grep)"; \
-	if [ $$(printf "%b" "$${NODE_PROCESSES}" | wc -l) -gt 0 ] ; then \
-		(printf "%b\n%b\n" "Failed testing: another node is already running" "$${NODE_PROCESSES}" >&2; exit 1);\
-	else \
-		$(REBAR) ct $(CT_TEST_FLAGS) --sys_config config/test.config; \
-	fi
+ct: SYSCONFIG=config/test.config
+ct: AETERNITY_TESTCONFIG_DB_BACKEND=mnesia
+ct: internal-ct
 
 ct-roma: KIND=test
-ct-roma: internal-build
-	@NODE_PROCESSES="$$(ps -fea | grep bin/aeternity | grep -v grep)"; \
-	if [ $$(printf "%b" "$${NODE_PROCESSES}" | wc -l) -gt 0 ] ; then \
-		(printf "%b\n%b\n" "Failed testing: another node is already running" "$${NODE_PROCESSES}" >&2; exit 1);\
-	else \
-		$(REBAR) ct $(CT_TEST_FLAGS) --sys_config config/test-roma.config; \
-	fi
+ct-roma: SYSCONFIG=config/test-roma.config
+ct-roma: AETERNITY_TESTCONFIG_DB_BACKEND=mnesia
+ct-roma: internal-ct
 
 ct-fortuna: KIND=test
-ct-fortuna: internal-build
-	@NODE_PROCESSES="$$(ps -fea | grep bin/aeternity | grep -v grep)"; \
-	if [ $$(printf "%b" "$${NODE_PROCESSES}" | wc -l) -gt 0 ] ; then \
-		(printf "%b\n%b\n" "Failed testing: another node is already running" "$${NODE_PROCESSES}" >&2; exit 1);\
-	else \
-		$(REBAR) ct $(CT_TEST_FLAGS) --sys_config config/test-fortuna.config; \
-	fi
+ct-fortuna: SYSCONFIG=config/test-fortuna.config
+ct-fortuna: AETERNITY_TESTCONFIG_DB_BACKEND=mnesia
+ct-fortuna: internal-ct
 
 ct-mnesia-leveled: KIND=test
-ct-mnesia-leveled: internal-build
-	@NODE_PROCESSES="$$(ps -fea | grep bin/aeternity | grep -v grep)"; \
-	if [ $$(printf "%b" "$${NODE_PROCESSES}" | wc -l) -gt 0 ] ; then \
-		(printf "%b\n%b\n" "Failed testing: another node is already running" "$${NODE_PROCESSES}" >&2; exit 1);\
-	else \
-		AETERNITY_TESTCONFIG_DB_BACKEND=leveled \
-			$(REBAR) ct $(CT_TEST_FLAGS) --sys_config config/test-mnesia-leveled.config; \
-	fi
+ct-mnesia-leveled: SYSCONFIG=config/test.config
+ct-mnesia-leveled: AETERNITY_TESTCONFIG_DB_BACKEND=leveled
+ct-mnesia-leveled: internal-ct
+
+ct-mnesia-rocksdb: KIND=test
+ct-mnesia-rocksdb: SYSCONFIG=config/test.config
+ct-mnesia-rocksdb: AETERNITY_TESTCONFIG_DB_BACKEND=rocksdb
+ct-mnesia-rocksdb: internal-ct
 
 REVISION:
 	@git rev-parse HEAD > $@
@@ -230,15 +240,13 @@ eunit-fortuna: KIND=test
 eunit-fortuna: internal-build
 	@ERL_FLAGS="-args_file $(EUNIT_VM_ARGS) -config $(EUNIT_SYS_CONFIG) -network_id local_fortuna_testnet" $(REBAR) do eunit $(EUNIT_TEST_FLAGS)
 
-eunit-mnesia-leveled: KIND=test
-eunit-mnesia-leveled: internal-build
-	@AETERNITY_TESTCONFIG_DB_BACKEND=leveled \
-		ERL_FLAGS="-args_file $(EUNIT_VM_ARGS) -config $(EUNIT_SYS_CONFIG)" $(REBAR) do eunit $(EUNIT_TEST_FLAGS)
-
 all-tests: eunit ct
 
-docker:
+docker: dockerignore-check
 	@docker build -t aeternity/aeternity:local .
+
+dockerignore-check: | .gitignore .dockerignore
+	bash -c "diff <(grep '^apps/' $(word 1,$|) | sort) <(grep '^apps/' $(word 2,$|) | sort)"
 
 ST_DOCKER_FILTER=--filter label=epoch_system_test=true
 
@@ -301,7 +309,7 @@ python-single-uat: swagger
 	( cd $(PYTHON_DIR) && TEST_NAME=$(TEST_NAME) $(MAKE) single-uat; )
 
 python-release-test: swagger
-	( cd $(PYTHON_DIR) && WORKDIR="$(WORKDIR)" TARBALL=$(TARBALL) VER=$(VER) $(MAKE) release-test; )
+	( cd $(PYTHON_DIR) && WORKDIR="$(WORKDIR)" PACKAGE=$(PACKAGE) VER=$(VER) $(MAKE) release-test; )
 
 python-package-win32-test:
 	( cd $(PYTHON_DIR) && WORKDIR="$(WORKDIR)" PACKAGESPECFILE=$(PACKAGE_SPEC_WIN32) $(MAKE) package-win32-test; )
@@ -378,34 +386,48 @@ multi-build: dev1-build
 # Build rules
 #
 
-.SECONDEXPANSION:
-
-internal-compile-deps: $$(KIND)
+internal-compile-deps:
 	@$(REBAR) as $(KIND) compile -d
 
-internal-package: $$(KIND)
 internal-package: REVISION internal-compile-deps $(SWAGGER_ENDPOINTS_SPEC)
 	@$(REBAR) as $(KIND) tar
 
-internal-build: $$(KIND)
 internal-build: REVISION internal-compile-deps $(SWAGGER_ENDPOINTS_SPEC)
 	@$(REBAR) as $(KIND) release
 
-internal-start: $$(KIND)
+internal-start:
 	@./_build/$(KIND)/$(CORE) start
 
-internal-stop: $$(KIND)
+internal-stop:
 	@./_build/$(KIND)/$(CORE) stop
 
-internal-attach: $$(KIND)
+internal-attach:
 	@./_build/$(KIND)/$(CORE) attach
 
-internal-clean: $$(KIND)
+internal-clean:
 	@rm -rf ./_build/$(KIND)/rel/aeternity/data/mnesia
 	@rm -rf ./_build/$(KIND)/rel/*/log/*
 
-internal-distclean: $$(KIND)
+internal-distclean:
 	@rm -rf ./_build/$(KIND)
+
+internal-ct: internal-build
+	@NODE_PROCESSES="$$(ps -fea | grep bin/aeternity | grep -v grep)"; \
+	if [ $$(printf "%b" "$${NODE_PROCESSES}" | wc -l) -gt 0 ] ; then \
+		(printf "%b\n%b\n" "Failed testing: another node is already running" "$${NODE_PROCESSES}" >&2; exit 1);\
+	else \
+		AETERNITY_TESTCONFIG_DB_BACKEND=$(AETERNITY_TESTCONFIG_DB_BACKEND) \
+			$(REBAR) ct $(CT_TEST_FLAGS) --sys_config $(SYSCONFIG); \
+	fi
+
+$(DEB_PKG_CHANGELOG_FILE):
+	@export DEBEMAIL=$(AE_DEB_MAINT_EMAIL); \
+	export DEBFULLNAME=$(AE_DEB_MAINT_NAME) ; \
+	dch --create --package=$(AE_DEB_PKG_NAME) -v $(AE_DEB_PKG_VERSION) $(AE_DEB_DCH_REL_NOTE); \
+	dch -r $(AE_DEB_DCH_REL_NOTE)
+
+prod-deb-package: $(DEB_PKG_CHANGELOG_FILE)
+	debuild -b -uc -us
 
 .PHONY: \
 	all console \
@@ -415,14 +437,17 @@ internal-distclean: $$(KIND)
 	dev1-start dev1-stop dev1-attach dev1-clean dev1-distclean \
 	dev2-start dev2-stop dev2-attach dev2-clean dev2-distclean \
 	dev3-start dev3-stop dev3-attach dev3-clean dev3-distclean \
-	internal-start internal-stop internal-attach internal-clean internal-compile-deps \
+	internal-start internal-stop internal-attach internal-clean internal-compile-deps internal-ct \
 	dialyzer \
-	docker docker-clean \
-	test smoke-test smoke-test-run system-test aevm-test-deps\
+	docker docker-clean dockerignore-check \
+	test smoke-test smoke-test-run system-test aevm-test-deps \
+	ct ct-roma ct-fortuna ct-mnesia-leveled ct-mnesia-rocksdb \
+	eunit eunit-roma eunit-fortuna \
 	system-smoke-test-deps system-test-deps \
 	kill killall \
 	clean distclean \
 	swagger swagger-docs swagger-check swagger-version-check \
 	rebar-lock-check \
 	python-env python-ws-test python-uats python-single-uat python-release-test python-package-win32-test \
-	REVISION
+	REVISION \
+	prod-deb-package

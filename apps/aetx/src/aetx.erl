@@ -29,13 +29,17 @@
         , signers/2
         , specialize_type/1
         , specialize_callback/1
-        , update_tx/2]).
+        , update_tx/2
+        , valid_at_protocol/2
+        , check_protocol_at_height/2]).
 
 -ifdef(TEST).
 -export([tx/1]).
 -endif.
 
--define(IS_CONTRACT_TX(T), ((T =:= contract_create_tx) or (T =:= contract_call_tx) or (T =:= channel_force_progress_tx))).
+-define(IS_CONTRACT_TX(T), ((T =:= contract_create_tx) or (T =:= contract_call_tx)
+                            or (T =:= channel_force_progress_tx)
+                            or (T =:= ga_meta_tx) or (T =:= ga_attach_tx))).
 
 %%%===================================================================
 %%% Types
@@ -60,6 +64,8 @@
                  | name_revoke_tx
                  | contract_create_tx
                  | contract_call_tx
+                 | ga_attach_tx
+                 | ga_meta_tx
                  | channel_create_tx
                  | channel_deposit_tx
                  | channel_withdraw_tx
@@ -83,6 +89,8 @@
                      | aens_revoke_tx:tx()
                      | aect_create_tx:tx()
                      | aect_call_tx:tx()
+                     | aega_attach_tx:tx()
+                     | aega_meta_tx:tx()
                      | aesc_create_tx:tx()
                      | aesc_deposit_tx:tx()
                      | aesc_withdraw_tx:tx()
@@ -113,7 +121,7 @@
 
 -callback type() -> atom().
 
--callback version() -> non_neg_integer().
+-callback version(tx_instance()) -> non_neg_integer().
 
 -callback fee(Tx :: tx_instance()) ->
     Fee :: integer().
@@ -155,6 +163,10 @@
 
 -callback for_client(Tx :: tx_instance()) ->
     map().
+
+-callback valid_at_protocol(Protocol :: aec_hard_forks:protocol_vsn(),
+                            Tx :: tx_instance()) -> boolean().
+
 
 -optional_callbacks([gas_price/1]).
 
@@ -201,6 +213,8 @@ gas_limit(#aetx{type = oracle_response_tx, size = Size, tx = Tx }, Height) ->
         {error, _Rsn} ->
             0
     end;
+gas_limit(#aetx{ type = ga_meta_tx, cb = CB, size = Size, tx = Tx }, Height) ->
+    base_gas(ga_meta_tx) + size_gas(Size) + CB:gas_limit(Tx, Height);
 gas_limit(#aetx{ type = Type, cb = CB, size = Size, tx = Tx }, _Height) when Type =/= channel_offchain_tx ->
     base_gas(Type) + size_gas(Size) + CB:gas(Tx);
 gas_limit(#aetx{ type = channel_offchain_tx }, _Height) ->
@@ -256,6 +270,11 @@ ttl(#aetx{ cb = CB, tx = Tx }) ->
         N -> N
     end.
 
+-spec valid_at_protocol(Protocol :: aec_hard_forks:protocol_vsn(),
+                      Tx :: tx()) -> boolean().
+valid_at_protocol(Protocol, #aetx{ cb = CB, tx = Tx }) ->
+    CB:valid_at_protocol(Protocol, Tx).
+
 -spec size(Tx :: tx()) -> pos_integer().
 size(#aetx{ size = Size }) ->
     Size.
@@ -271,6 +290,11 @@ from_db_format(#aetx{ cb = aect_create_tx, tx = Tx } = AETx) ->
         Tx  -> AETx;
         Tx1 -> AETx#aetx{ tx = Tx1 }
     end;
+from_db_format(#aetx{ cb = aesc_force_progress_tx, tx = Tx } = AETx) ->
+    case aesc_force_progress_tx:from_db_format(Tx) of
+        Tx  -> AETx;
+        Tx1 -> AETx#aetx{ tx = Tx1 }
+    end;
 from_db_format(#aetx{} = Tx) ->
     Tx.
 
@@ -280,8 +304,10 @@ from_db_format(#aetx{} = Tx) ->
 
 check(Tx, Trees, Env) ->
     case aetx_env:context(Env) of
-        aetx_transaction -> check_tx(Tx, Trees, Env);
-        aetx_contract    -> check_contract(Tx, Trees, Env)
+        aetx_contract    ->
+            check_contract(Tx, Trees, Env);
+        Ctxt when Ctxt == aetx_transaction; Ctxt == aetx_ga ->
+            check_tx(Tx, Trees, Env)
     end.
 
 check_contract(#aetx{ cb = CB, tx = Tx }, Trees, Env) ->
@@ -291,7 +317,9 @@ check_tx(#aetx{ cb = CB, tx = Tx } = AeTx, Trees, Env) ->
     Checks =
         [fun() -> check_minimum_fee(AeTx, Env) end,
          fun() -> check_minimum_gas_price(AeTx, aetx_env:height(Env)) end,
-         fun() -> check_ttl(AeTx, Env) end],
+         fun() -> check_ttl(AeTx, Env) end,
+         fun() -> check_protocol_at_height(AeTx, aetx_env:height(Env)) end
+        ],
     case aeu_validation:run(Checks) of
         ok             -> CB:check(Tx, Trees, Env);
         {error, _} = E -> E
@@ -329,6 +357,13 @@ check_ttl(AeTx, Env) ->
         false -> {error, ttl_expired}
     end.
 
+check_protocol_at_height(AeTx, Height) ->
+    Protocol = aec_hard_forks:protocol_effective_at_height(Height),
+    case valid_at_protocol(Protocol, AeTx) of
+        true  -> ok;
+        false -> {error, invalid_at_height}
+    end.
+
 %%%===================================================================
 %%% Processing transactions
 %%%===================================================================
@@ -360,7 +395,8 @@ custom_apply(Fun, #aetx{ cb = CB, tx = Tx}, Trees, Env) ->
 -spec serialize_for_client(Tx :: tx()) -> map().
 serialize_for_client(#aetx{ cb = CB, type = Type, tx = Tx }) ->
     Res0 = CB:for_client(Tx),
-    Res1 = Res0#{ <<"type">> => type_to_swagger_name(Type), <<"version">> => CB:version() },
+    Res1 = Res0#{ <<"type">> => type_to_swagger_name(Type),
+                  <<"version">> => CB:version(Tx) },
     case maps:get(<<"ttl">>, Res1, 0) of
         0 -> maps:remove(<<"ttl">>, Res1);
         _ -> Res1
@@ -397,6 +433,8 @@ type_to_cb(name_revoke_tx)            -> aens_revoke_tx;
 type_to_cb(name_create_tx)            -> aens_create_tx;
 type_to_cb(contract_call_tx)          -> aect_call_tx;
 type_to_cb(contract_create_tx)        -> aect_create_tx;
+type_to_cb(ga_attach_tx)              -> aega_attach_tx;
+type_to_cb(ga_meta_tx)                -> aega_meta_tx;
 type_to_cb(channel_create_tx)         -> aesc_create_tx;
 type_to_cb(channel_deposit_tx)        -> aesc_deposit_tx;
 type_to_cb(channel_withdraw_tx)       -> aesc_withdraw_tx;
@@ -430,6 +468,7 @@ type_to_swagger_name(channel_close_mutual_tx)   -> <<"ChannelCloseMutualTx">>;
 type_to_swagger_name(channel_slash_tx)          -> <<"ChannelSlashTx">>;
 type_to_swagger_name(channel_settle_tx)         -> <<"ChannelSettleTx">>;
 type_to_swagger_name(channel_snapshot_solo_tx)  -> <<"ChannelSnapshotSoloTx">>;
+%% not exposed in HTTP API:
 type_to_swagger_name(channel_offchain_tx)       -> <<"ChannelOffchainTx">>.
 
 -spec specialize_type(Tx :: tx()) -> {tx_type(), tx_instance()}.

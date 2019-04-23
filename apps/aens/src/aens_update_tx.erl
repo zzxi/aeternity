@@ -20,11 +20,12 @@
          check/3,
          process/3,
          signers/2,
-         version/0,
+         version/1,
          serialization_template/1,
          serialize/1,
          deserialize/2,
-         for_client/1
+         for_client/1,
+         valid_at_protocol/2
         ]).
 
 %% Getters
@@ -111,7 +112,7 @@ check(#ns_update_tx{} = _Tx, Trees,_Env) ->
 -spec process(tx(), aec_trees:trees(), aetx_env:env()) -> {ok, aec_trees:trees(), aetx_env:env()}.
 process(#ns_update_tx{} = UTx, Trees, Env) ->
     Instructions =
-        aec_tx_processor:name_update_tx_instructions(
+        aeprimop:name_update_tx_instructions(
           account_pubkey(UTx),
           name_hash(UTx),
           name_ttl(UTx),
@@ -119,7 +120,7 @@ process(#ns_update_tx{} = UTx, Trees, Env) ->
           pointers(UTx),
           fee(UTx),
           nonce(UTx)),
-    aec_tx_processor:eval(Instructions, Trees, Env).
+    aeprimop:eval(Instructions, Trees, Env).
 
 -spec signers(tx(), aec_trees:trees()) -> {ok, [aec_keys:pubkey()]}.
 signers(#ns_update_tx{} = Tx, _) ->
@@ -133,8 +134,8 @@ serialize(#ns_update_tx{account_id = AccountId,
                         pointers   = Pointers,
                         client_ttl = ClientTTL,
                         fee        = Fee,
-                        ttl        = TTL}) ->
-    {version(),
+                        ttl        = TTL} = Tx) ->
+    {version(Tx),
      [ {account_id, AccountId}
      , {nonce, Nonce}
      , {name_id, NameId}
@@ -221,5 +222,11 @@ account_pubkey(#ns_update_tx{account_id = AccountId}) ->
 name_hash(#ns_update_tx{name_id = NameId}) ->
     aeser_id:specialize(NameId, name).
 
-version() ->
+-spec version(tx()) -> non_neg_integer().
+version(_) ->
     ?NAME_UPDATE_TX_VSN.
+
+-spec valid_at_protocol(aec_hard_forks:protocol_vsn(), tx()) -> boolean().
+valid_at_protocol(_, _) ->
+    true.
+

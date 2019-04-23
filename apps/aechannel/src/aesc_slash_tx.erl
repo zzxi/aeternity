@@ -19,11 +19,12 @@
          check/3,
          process/3,
          signers/2,
-         version/0,
+         version/1,
          serialization_template/1,
          serialize/1,
          deserialize/2,
-         for_client/1
+         for_client/1,
+         valid_at_protocol/2
         ]).
 
 %%%===================================================================
@@ -105,13 +106,11 @@ channel_pubkey(#channel_slash_tx{channel_id = ChannelId}) ->
 check(#channel_slash_tx{payload    = Payload,
                         poi        = PoI,
                         fee        = Fee,
-                        nonce      = Nonce} = Tx,
-      Trees, Env) ->
-    Height        = aetx_env:height(Env),
+                        nonce      = Nonce} = Tx, Trees, Env) ->
     ChannelPubKey = channel_pubkey(Tx),
     FromPubKey    = from_pubkey(Tx),
-    case aesc_utils:check_slash_payload(ChannelPubKey, FromPubKey, Nonce, Fee,
-                                   Payload, PoI, Height, Trees) of
+    case aesc_utils:check_slash_payload(ChannelPubKey, FromPubKey, Nonce,
+                                        Fee, Payload, PoI, Trees, Env) of
         ok -> {ok, Trees};
         Err -> Err
     end.
@@ -139,8 +138,8 @@ serialize(#channel_slash_tx{channel_id = ChannelId,
                             poi        = PoI,
                             ttl        = TTL,
                             fee        = Fee,
-                            nonce      = Nonce}) ->
-    {version(),
+                            nonce      = Nonce} = Tx) ->
+    {version(Tx),
      [ {channel_id, ChannelId}
      , {from_id   , FromId}
      , {payload   , Payload}
@@ -195,10 +194,11 @@ serialization_template(?CHANNEL_SLASH_TX_VSN) ->
     , {nonce     , int}
     ].
 
-%%%===================================================================
-%%% Internal functions
-%%%===================================================================
-
--spec version() -> non_neg_integer().
-version() ->
+-spec version(tx()) -> non_neg_integer().
+version(_) ->
     ?CHANNEL_SLASH_TX_VSN.
+
+-spec valid_at_protocol(aec_hard_forks:protocol_vsn(), tx()) -> boolean().
+valid_at_protocol(Protocol, #channel_slash_tx{payload = Payload}) ->
+    aesc_utils:is_payload_valid_at_protocol(Protocol, Payload).
+
