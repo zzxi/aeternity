@@ -191,7 +191,8 @@
          fp_register_oracle/1,
          fp_oracle_query/1,
          fp_oracle_extend/1,
-         fp_oracle_respond/1
+         fp_oracle_respond/1,
+         fp_pinned_block_all/1
         ]).
 
 % fork related tests
@@ -212,8 +213,6 @@
 -define(MINER_PUBKEY, <<12345:?MINER_PUB_BYTES/unit:8>>).
 -define(BOGUS_CHANNEL, <<1:?MINER_PUB_BYTES/unit:8>>).
 -define(ROLES, [initiator, responder]).
--define(VM_VERSION, aect_test_utils:latest_sophia_vm_version()).
--define(ABI_VERSION, aect_test_utils:latest_sophia_abi_version()).
 -define(TEST_LOG(Format, Data), ct:log(Format, Data)).
 -define(MINERVA_FORK_HEIGHT, 1000).
 -define(FORTUNA_FORK_HEIGHT, 10000).
@@ -248,6 +247,7 @@ groups() ->
        {group, snapshot_solo_negative},
        {group, force_progress},
        {group, force_progress_negative},
+       {group, force_progress_pinned_env},
        {group, force_progress_pinned_env_negative},
        {group, fork_awareness}
       ]
@@ -392,6 +392,17 @@ groups() ->
        fp_oracle_extend,
        fp_oracle_respond
       ]},
+     {force_progress_pinned_env, [sequence],
+      [ fp_use_onchain_contract,
+        fp_use_onchain_oracle,
+
+        fp_register_name,
+        fp_register_oracle,
+        fp_oracle_query,
+        fp_oracle_query,
+        fp_oracle_extend,
+        fp_oracle_respond
+      ]},
      {force_progress_pinned_env_negative, [sequence],
       [ fp_pinned_block_not_found,
         fp_pinned_block_too_old,
@@ -418,18 +429,52 @@ end_per_suite(_Config) ->
 
 init_per_group(FPGroup, Config) when FPGroup =:= fork_awareness;
                                      FPGroup =:= force_progress_pinned_env_negative ->
-
     meck:expect(aec_hard_forks, protocol_effective_at_height,
                 fun(V) when V < ?MINERVA_FORK_HEIGHT -> ?ROMA_PROTOCOL_VSN;
                    (V) when V < ?FORTUNA_FORK_HEIGHT -> ?MINERVA_PROTOCOL_VSN;
                    (_)                               -> ?FORTUNA_PROTOCOL_VSN
                 end),
-    meck:new(aec_chain, [passthrough]),
     Config;
+init_per_group(force_progress_pinned_env, Config) ->
+    meck:expect(aec_hard_forks, protocol_effective_at_height,
+                fun(V) when V < ?MINERVA_FORK_HEIGHT -> ?ROMA_PROTOCOL_VSN;
+                   (V) when V < ?FORTUNA_FORK_HEIGHT -> ?MINERVA_PROTOCOL_VSN;
+                   (_)                               -> ?FORTUNA_PROTOCOL_VSN
+                end),
+    PrevKBlockHash = <<41:?BLOCK_HEADER_HASH_BYTES/unit:8>>,
+    KBlockHash = <<42:?BLOCK_HEADER_HASH_BYTES/unit:8>>,
+    MBlockHash = <<43:?BLOCK_HEADER_HASH_BYTES/unit:8>>,
+    VM = aect_test_utils:latest_sophia_vm_version(),
+    ABI = aect_test_utils:latest_sophia_abi_version(),
+
+    Height = 1000000,
+    true = aect_contracts:is_legal_version_at_height(create, #{abi => ABI, vm => VM},
+                                                    Height),
+    meck:expect(aec_chain, get_header,
+                fun(BHash) when BHash =:= KBlockHash ->
+                    {ok, fake_header(key, PrevKBlockHash,
+                                      PrevKBlockHash,
+                                      Height - 5)};
+                    (BHash) when BHash =:= MBlockHash ->
+                    {ok, fake_header(micro, KBlockHash, KBlockHash,
+                                      Height - 5)}
+                end),
+    MeckGetTrees =
+        fun(Hash, Trees) ->
+            meck:expect(aec_chain, get_block_state,
+                        fun(BHash) when BHash =:= Hash ->
+                            {ok, Trees}
+                        end)
+        end,
+    CustomConfig = [{height, Height}, {meck_chain_get_trees, MeckGetTrees},
+                    {pinned_blocks, [{KBlockHash, key},
+                                     {MBlockHash, micro}]}],
+    CustomConfig ++ Config;
 init_per_group(_Group, Config) ->
     Config.
 
 end_per_group(FPGroup, _Config) when FPGroup =:= fork_awareness;
+                                     FPGroup =:= force_progress_pinned_env;
                                      FPGroup =:= force_progress_pinned_env_negative ->
     meck:unload(aec_chain),
     meck:unload(aec_hard_forks),
@@ -2512,14 +2557,15 @@ fp_chain_is_replaced_by_slash(Cfg) ->
 fp_use_onchain_oracle(Cfg) ->
     FPRound = 20,
     LockPeriod = 10,
-    FPHeight0 = 20,
+    Height =  proplists:get_value(height, Cfg, 4),
     Question = <<"To be, or not to be?">>,
     OQuestion = aeb_heap:to_binary(Question, 0),
     Answer = <<"oh, yes">>,
     OResponse = aeb_heap:to_binary(Answer, 0),
     QueryFee = 50000,
+    MeckGetTrees = proplists:get_value(meck_chain_get_trees, Cfg),
     CallOnChain =
-        fun(Owner, Forcer) ->
+        fun(Owner, Forcer, PinnedBlock) ->
             IAmt0 = 10000000 * aec_test_utils:min_gas_price(),
             RAmt0 = 10000000 * aec_test_utils:min_gas_price(),
             ContractCreateRound = 10,
@@ -2528,7 +2574,7 @@ fp_use_onchain_oracle(Cfg) ->
                   lock_period => LockPeriod,
                   channel_reserve => 1},
                [positive(fun create_channel_/2),
-                set_prop(height, FPHeight0),
+                set_prop(height, Height),
 
                 % create oracle
                 register_new_oracle(aeb_heap:to_binary(string, 0),
@@ -2550,7 +2596,6 @@ fp_use_onchain_oracle(Cfg) ->
                 force_call_contract_first(Forcer, <<"place_bet">>, [<<"\"Lorem\"">>],
                                           FPRound),
                 force_call_contract(Forcer, <<"place_bet">>, [<<"\"Ipsum\"">>]),
-
                 % try resolving a contract with wrong query id
                 fun(Props) ->
                     EncodedQueryId = address_encode(<<1234:12/unit:8>>),
@@ -2583,6 +2628,22 @@ fp_use_onchain_oracle(Cfg) ->
 
                 % place a winnning bet
                 force_call_contract(Forcer, <<"place_bet">>, [quote(Answer)]),
+                fun(P) ->
+                    case PinnedBlock of
+                        no_pinned_block -> P;
+                        {BH, BType} ->
+                        run(P,
+                            [ set_prop(pinned_block,
+                                        aesc_pinned_block:block_hash(BH,
+                                                                    BType)),
+                              fun(#{state := S} = P1) ->
+                                  Trees = aesc_test_utils:trees(S),
+                                  MeckGetTrees(BH, Trees),
+                                  P1
+                              end
+                            ])
+                    end
+                end,
                 fun(#{query_id := QueryId} = Props) ->
                     EncodedQueryId = address_encode(QueryId),
                     (force_call_contract(Forcer, <<"resolve">>, [EncodedQueryId]))(Props)
@@ -2603,14 +2664,16 @@ fp_use_onchain_oracle(Cfg) ->
                 assert_last_channel_result(QueryFee, word)
                ])
         end,
-    [CallOnChain(Owner, Forcer) || Owner  <- ?ROLES,
-                                   Forcer <- ?ROLES],
+    PinnedBlocks = proplists:get_value(pinned_blocks, Cfg, [no_pinned_block]),
+    [CallOnChain(Owner, Forcer, PB) || Owner  <- ?ROLES,
+                                       Forcer <- ?ROLES,
+                                       PB     <- PinnedBlocks],
     ok.
 
 fp_use_onchain_name_resolution(Cfg) ->
     FPRound = 20,
     LockPeriod = 10,
-    FPHeight0 = 20,
+    Height =  proplists:get_value(height, Cfg, 4),
     Name = <<"lorem.test">>,
     ForceCallCheckName =
         fun(Forcer, K, Found) when is_binary(K) andalso is_boolean(Found) ->
@@ -2620,9 +2683,10 @@ fp_use_onchain_name_resolution(Cfg) ->
                    assert_last_channel_result(Found, bool)])
             end
         end,
+    MeckGetTrees = proplists:get_value(meck_chain_get_trees, Cfg),
 
     CallOnChain =
-        fun(Owner, Forcer) ->
+        fun(Owner, Forcer, PinnedBlock) ->
             IAmt0 = 5000000,
             RAmt0 = 5000000,
             ContractCreateRound = 10,
@@ -2631,7 +2695,7 @@ fp_use_onchain_name_resolution(Cfg) ->
                   lock_period => LockPeriod,
                   channel_reserve => 1},
                [positive(fun create_channel_/2),
-                set_prop(height, FPHeight0),
+                set_prop(height, Height),
 
                 % create off-chain contract
                 create_trees_if_not_present(),
@@ -2646,13 +2710,31 @@ fp_use_onchain_name_resolution(Cfg) ->
                               [{<<"account_pubkey">>, aeser_id:create(account, <<1:256>>)},
                                {<<"oracle">>, aeser_id:create(oracle, <<2:256>>)},
                                {<<"unexpected_key">>, aeser_id:create(account, <<3:256>>)}]),
+                fun(P) ->
+                    case PinnedBlock of
+                        no_pinned_block -> P;
+                        {BH, BType} ->
+                        run(P,
+                            [ set_prop(pinned_block,
+                                        aesc_pinned_block:block_hash(BH,
+                                                                    BType)),
+                              fun(#{state := S} = P1) ->
+                                  Trees = aesc_test_utils:trees(S),
+                                  MeckGetTrees(BH, Trees),
+                                  P1
+                              end
+                            ])
+                    end
+                end,
                 ForceCallCheckName(Forcer, <<"oracle">>, true),
                 ForceCallCheckName(Forcer, <<"unexpected_key">>, true),
                 ForceCallCheckName(Forcer, <<"no_such_pointer">>, false)
                ])
         end,
-    [CallOnChain(Owner, Forcer) || Owner  <- ?ROLES,
-                                   Forcer <- ?ROLES],
+    PinnedBlocks = proplists:get_value(pinned_blocks, Cfg, [no_pinned_block]),
+    [CallOnChain(Owner, Forcer, PB) || Owner  <- ?ROLES,
+                                       Forcer <- ?ROLES,
+                                       PB     <- PinnedBlocks],
     ok.
 
 fp_use_onchain_enviroment(Cfg) ->
@@ -2789,14 +2871,136 @@ fp_use_remote_call(Cfg) ->
 
 
 fp_use_onchain_contract(Cfg) ->
+    FPRound = 20,
     LockPeriod = 10,
-    IAmt0 = 30,
-    RAmt0 = 30,
-    run(#{cfg => Cfg, initiator_amount => IAmt0,
-        responder_amount => RAmt0,
-        lock_period => LockPeriod,
-        channel_reserve => 1},
-        []),
+    Height =  proplists:get_value(height, Cfg, 4),
+    RemoteCall =
+        fun(Forcer, ContractHandle) ->
+            fun(Props) ->
+                RemoteContract = maps:get(ContractHandle, Props),
+                Address = address_encode(RemoteContract),
+                Args = [Address],
+                run(Props,
+                    [ force_call_contract(Forcer, <<"increment">>, Args),
+                      force_call_contract(Forcer, <<"get">>, Args)
+                    ])
+            end
+        end,
+    NameKey =
+        fun(Key) ->
+            list_to_atom(atom_to_list(Key) ++ "_name")
+        end,
+    PushContractId =
+        fun(Key) ->
+            fun(P) ->
+                Key2 = NameKey(Key),
+                run(P,
+                    [rename_prop(contract_id, Key, keep_old),
+                     rename_prop(contract_file, Key2, keep_old)])
+            end
+        end,
+    PopContractId =
+        fun(Key) ->
+            fun(P) ->
+                Key2 = NameKey(Key),
+                run(P,
+                    [rename_prop(Key, contract_id, keep_old),
+                     rename_prop(Key2, contract_file, keep_old)])
+            end
+        end,
+
+    MeckGetTrees = proplists:get_value(meck_chain_get_trees, Cfg),
+    CallOnChain =
+        fun(Owner, Forcer, PinnedBlock) ->
+            IAmt0 = 30,
+            RAmt0 = 30,
+            ContractCreateRound = 10,
+            run(#{cfg => Cfg, initiator_amount => IAmt0,
+                              responder_amount => RAmt0,
+                  lock_period => LockPeriod,
+                  channel_reserve => 1},
+               [positive(fun create_channel_/2),
+                set_prop(height, Height),
+
+                % create off-chain contract that is going to be used in the
+                % remote call later
+                create_trees_if_not_present(),
+                set_from(Owner, owner, owner_privkey),
+                create_contract_in_trees(_Round    = ContractCreateRound,
+                                         _Contract = "counter",
+                                         _InitArgs = [<<"42">>],
+                                         _Deposit  = 2),
+                PushContractId(remote_contract),
+                fun(#{contract_id := RemoteContract} = Props) ->
+                    Props#{remote_contract => RemoteContract}
+                end,
+                % create the second contract
+                create_contract_in_trees(_Round1    = ContractCreateRound + 10,
+                                         _Contract2 = "remote_call",
+                                         _InitArgs2 = [],
+                                         _Deposit2  = 2),
+                PushContractId(second_contract),
+                create_contract_in_onchain_trees(_OnchainContract = "counter",
+                                                 _OnchainCInitArgs = [<<"42">>],
+                                                 _OnchainDeposit  = 2),
+                PushContractId(onchain_contract),
+                PopContractId(remote_contract),
+                fun(P) ->
+                    case PinnedBlock of
+                        no_pinned_block -> P;
+                        {BH, BType} ->
+                        run(P,
+                            [ set_prop(pinned_block,
+                                        aesc_pinned_block:block_hash(BH,
+                                                                    BType)),
+                              fun(#{state := S} = P1) ->
+                                  Trees = aesc_test_utils:trees(S),
+                                  MeckGetTrees(BH, Trees),
+                                  P1
+                              end
+                            ])
+                    end
+                end,
+                force_call_contract_first(Forcer, <<"tick">>, [],
+                                          FPRound),
+                force_call_contract(Forcer, <<"get">>, []),
+                assert_last_channel_result(43, word),% it works
+
+                PopContractId(second_contract),
+                set_prop(call_deposit, 2),
+                RemoteCall(Forcer, remote_contract),
+                assert_last_channel_result(44, word), % it works remote
+                fun(Props) ->
+                    RemoteContract = maps:get(onchain_contract, Props),
+                    Address = address_encode(RemoteContract),
+                    Args = [Address],
+                    run(Props#{check_not_all_gas_used => false},
+                        %% force progress succededs but all gas is consumed
+                        %% because on-chain contract is not reachable
+                        [ force_call_contract(Forcer, <<"increment">>, Args)])
+                end,
+                fun(#{state := S,
+                      signed_force_progress := SignedForceProgressTx,
+                      solo_payload := #{update := Update,
+                                        round  := Round}} = Props) ->
+                    {_ContractId, Caller} = aesc_offchain_update:extract_call(Update),
+                    TxHashContractPubkey = aesc_utils:tx_hash_to_contract_pubkey(
+                                          aetx_sign:hash(SignedForceProgressTx)),
+                    CallId = aect_call:id(Caller,
+                                          Round,
+                                          TxHashContractPubkey),
+                    Call = aect_test_utils:get_call(TxHashContractPubkey, CallId,
+                                                    S),
+                    GasUsed = aect_call:gas_used(Call),
+                    GasLimit = maps:get(gas_limit, Props, 10000000),
+                    ?assertEqual(GasUsed, GasLimit), % assert all gas
+                    Props
+                end])
+        end,
+    PinnedBlocks = proplists:get_value(pinned_blocks, Cfg, [no_pinned_block]),
+    [CallOnChain(Owner, Forcer, PB) || Owner  <- ?ROLES,
+                                       Forcer <- ?ROLES,
+                                       PB     <- PinnedBlocks],
     ok.
 
 
@@ -3238,7 +3442,7 @@ fp_solo_payload_broken_call(Cfg) ->
                     Update = aesc_offchain_update:op_call_contract(
                                 aeser_id:create(account, From),
                                 aeser_id:create(contract, ContractId),
-                                ?ABI_VERSION, 1,
+                                aect_test_utils:latest_sophia_abi_version(), 1,
                                 CallData,
                                 [],
                                 _GasPrice = aec_test_utils:min_gas_price(),
@@ -3367,6 +3571,7 @@ fp_register_name(Cfg) ->
     % this validates that the contract and the fucntion are indeed callable
     % on-chain and they produce a name preclaim
     ?TEST_LOG("Create contract ~p.aes on-chain", [ContractName]),
+    Height =  proplists:get_value(height, Cfg, 4),
     run(#{cfg => Cfg},
         [ % create account for being contract owner
           fun(#{} = Props) ->
@@ -3378,6 +3583,7 @@ fp_register_name(Cfg) ->
               Props#{state => S1, onchain_contract_owner_pubkey => NewAcc,
                                   onchain_contract_owner_privkey => PrivKey}
           end,
+          set_prop(height, Height),
           % create contract on-chain
           fun(#{onchain_contract_owner_pubkey := PubKey,
                 state := S0} = Props) ->
@@ -3389,8 +3595,8 @@ fp_register_name(Cfg) ->
                     #{owner_id    => aeser_id:create(account, PubKey),
                       nonce       => Nonce,
                       code        => BinCode,
-                      vm_version  => ?VM_VERSION,
-                      abi_version => ?ABI_VERSION,
+                      vm_version  => aect_test_utils:latest_sophia_vm_version(),
+                      abi_version => aect_test_utils:latest_sophia_abi_version(),
                       deposit     => 1,
                       amount      => 1,
                       gas         => 123456,
@@ -3399,7 +3605,7 @@ fp_register_name(Cfg) ->
                       fee         => 1000000 * aec_test_utils:min_gas_price()}),
             ?TEST_LOG("Contract create tx ~p", [ContractCreateTx]),
             OnChainTrees = aesc_test_utils:trees(S0),
-            TxEnv = tx_env(#{height => 3}),
+            TxEnv = tx_env(#{height => Height}),
             {ok, OnChainTrees1, _} = aetx:process(ContractCreateTx,
                                                   OnChainTrees,
                                                   TxEnv),
@@ -3431,7 +3637,7 @@ fp_register_name(Cfg) ->
                       nonce       => Nonce,
                       contract_id => aeser_id:create(contract,
                                                     ContractId),
-                      abi_version => ?ABI_VERSION,
+                      abi_version => aect_test_utils:latest_sophia_abi_version(),
                       amount      => 1,
                       gas         => 123456,
                       gas_price   => aec_test_utils:min_gas_price(),
@@ -3439,7 +3645,7 @@ fp_register_name(Cfg) ->
                       fee         => 500000 * aec_test_utils:min_gas_price()}),
             ?TEST_LOG("Contract call tx ~p", [CallTx]),
             OnChainTrees = aesc_test_utils:trees(S0),
-            TxEnv = tx_env(#{height => 4}),
+            TxEnv = tx_env(#{height => Height + 1}),
             {ok, OnChainTrees1, _} = aetx:process(CallTx,
                                                   OnChainTrees,
                                                   TxEnv),
@@ -3456,8 +3662,9 @@ fp_register_name(Cfg) ->
           end]),
     ?TEST_LOG("Name preclaimed on-chain, proceeding with off-chain tests", []),
 
+    MeckGetTrees = proplists:get_value(meck_chain_get_trees, Cfg),
     Test =
-        fun(Owner, Forcer) ->
+        fun(Owner, Forcer, PinnedBlock) ->
             ?TEST_LOG("Name preclaim off-chain, owner is ~p, forcer is ~p",
                       [Owner, Forcer]),
             ContractCreateRound = 10,
@@ -3469,6 +3676,7 @@ fp_register_name(Cfg) ->
                   set_from(initiator),
                   set_prop(round, 42),
                   set_prop(state_hash, StateHash),
+                  set_prop(height, Height),
                   positive(fun snapshot_solo_/2),
                   fun(#{state := S,
                         channel_pubkey := ChannelPubKey} = Props) ->
@@ -3485,6 +3693,22 @@ fp_register_name(Cfg) ->
                                           _InitArgs = [],
                                           _Deposit  = 2),
                   % force progress contract on-chain
+                  fun(P) ->
+                      case PinnedBlock of
+                          no_pinned_block -> P;
+                          {BH, BType} ->
+                          run(P,
+                              [ set_prop(pinned_block,
+                                         aesc_pinned_block:block_hash(BH,
+                                                                     BType)),
+                                fun(#{state := S} = P1) ->
+                                    Trees = aesc_test_utils:trees(S),
+                                    MeckGetTrees(BH, Trees),
+                                    P1
+                                end
+                              ])
+                      end
+                  end,
                   fun(#{contract_id := ContractId,
                         from_pubkey := Pubkey,
                         from_privkey := Privkey} = Props) ->
@@ -3527,8 +3751,10 @@ fp_register_name(Cfg) ->
                       Props
                   end])
         end,
-    [Test(Owner, Forcer) || Owner  <- ?ROLES,
-                            Forcer <- ?ROLES],
+    PinnedBlocks = proplists:get_value(pinned_blocks, Cfg, [no_pinned_block]),
+    [Test(Owner, Forcer, PB) || Owner  <- ?ROLES,
+                                Forcer <- ?ROLES,
+                                PB     <- PinnedBlocks],
     ok.
 
 fp_settle_too_soon(Cfg) ->
@@ -3692,9 +3918,9 @@ fp_oracle_action(Cfg, ProduceCallData) ->
     % this validates that the contract and the fucntion are indeed callable
     % on-chain and they produce the expected oracle action
     ?TEST_LOG("Create contract ~p.aes on-chain", [ContractName]),
+    Height =  proplists:get_value(height, Cfg, 4),
     run(#{cfg => Cfg},
         [ % create account for being contract owner
-          set_prop(height, 10),
           fun(#{} = Props) ->
               S0 = aesc_test_utils:new_state(),
               {NewAcc, S} = aesc_test_utils:setup_new_account(S0),
@@ -3704,6 +3930,7 @@ fp_oracle_action(Cfg, ProduceCallData) ->
               Props#{state => S1, onchain_contract_owner_pubkey => NewAcc,
                                   onchain_contract_owner_privkey => PrivKey}
           end,
+          set_prop(height, Height),
           % create contract on-chain
           fun(#{onchain_contract_owner_pubkey := PubKey,
                 state := S0} = Props) ->
@@ -3715,8 +3942,8 @@ fp_oracle_action(Cfg, ProduceCallData) ->
                     #{owner_id    => aeser_id:create(account, PubKey),
                       nonce       => Nonce,
                       code        => BinCode,
-                      vm_version  => ?VM_VERSION,
-                      abi_version => ?ABI_VERSION,
+                      vm_version  => aect_test_utils:latest_sophia_vm_version(),
+                      abi_version => aect_test_utils:latest_sophia_abi_version(),
                       deposit     => 1,
                       amount      => 1,
                       gas         => 123456,
@@ -3725,7 +3952,7 @@ fp_oracle_action(Cfg, ProduceCallData) ->
                       fee         => 1000000 * aec_test_utils:min_gas_price()}),
             ?TEST_LOG("Contract create tx ~p", [ContractCreateTx]),
             OnChainTrees = aesc_test_utils:trees(S0),
-            TxEnv = tx_env(#{height => 3}),
+            TxEnv = tx_env(#{height => Height}),
             {ok, OnChainTrees1,_} = aetx:process(ContractCreateTx,
                                                  OnChainTrees,
                                                  TxEnv),
@@ -3760,7 +3987,7 @@ fp_oracle_action(Cfg, ProduceCallData) ->
                       nonce       => Nonce,
                       contract_id => aeser_id:create(contract,
                                                     ContractId),
-                      abi_version => ?ABI_VERSION,
+                      abi_version => aect_test_utils:latest_sophia_abi_version(),
                       amount      => 1,
                       gas         => 123456,
                       gas_price   => aec_test_utils:min_gas_price(),
@@ -3768,7 +3995,7 @@ fp_oracle_action(Cfg, ProduceCallData) ->
                       fee         => 500000 * aec_test_utils:min_gas_price()}),
             ?TEST_LOG("Contract call tx ~p", [CallTx]),
             OnChainTrees = aesc_test_utils:trees(S0),
-            TxEnv = tx_env(#{height => 4}),
+            TxEnv = tx_env(#{height => Height + 1}),
             {ok, OnChainTrees1,_} = aetx:process(CallTx,
                                                  OnChainTrees,
                                                  TxEnv),
@@ -3784,8 +4011,9 @@ fp_oracle_action(Cfg, ProduceCallData) ->
             Props#{state => S1}
           end]),
     ?TEST_LOG("Oracle action succeded on-chain, proceeding with off-chain tests", []),
+    MeckGetTrees = proplists:get_value(meck_chain_get_trees, Cfg),
     Test =
-        fun(Owner, Forcer) ->
+        fun(Owner, Forcer, PinnedBlock) ->
             ?TEST_LOG("Oracle off-chain action, owner is ~p, forcer is ~p",
                       [Owner, Forcer]),
             ContractCreateRound = 10,
@@ -3793,6 +4021,7 @@ fp_oracle_action(Cfg, ProduceCallData) ->
                 [ % test contract on-chain:
                   % create account for being contract owner
                   positive(fun create_channel_/2),
+                  set_prop(height, Height),
                   register_new_oracle(aeb_heap:to_binary(string, 0),
                                       aeb_heap:to_binary(word, 0),
                                       QueryFee),
@@ -3818,6 +4047,22 @@ fp_oracle_action(Cfg, ProduceCallData) ->
                                           _Deposit  = 2),
                   oracle_query(aeb_heap:to_binary(<<"Some question">>, 0), 10),
                   % force progress contract on-chain
+                  fun(P) ->
+                      case PinnedBlock of
+                          no_pinned_block -> P;
+                          {BH, BType} ->
+                          run(P,
+                              [ set_prop(pinned_block,
+                                         aesc_pinned_block:block_hash(BH,
+                                                                     BType)),
+                                fun(#{state := S} = P1) ->
+                                    Trees = aesc_test_utils:trees(S),
+                                    MeckGetTrees(BH, Trees),
+                                    P1
+                                end
+                              ])
+                      end
+                  end,
                   fun(#{contract_id   := ContractId,
                         oracle        := Oracle,
                         from_pubkey   := Pubkey,
@@ -3864,8 +4109,10 @@ fp_oracle_action(Cfg, ProduceCallData) ->
                       Props
                   end])
         end,
-    [Test(Owner, Forcer) || Owner  <- ?ROLES,
-                            Forcer <- ?ROLES],
+    PinnedBlocks = proplists:get_value(pinned_blocks, Cfg, [no_pinned_block]),
+    [Test(Owner, Forcer, PB) || Owner  <- ?ROLES,
+                                Forcer <- ?ROLES,
+                                PB     <- PinnedBlocks],
     ok.
 
 
@@ -3905,6 +4152,7 @@ fp_register_oracle(Cfg) ->
     % this validates that the contract and the fucntion are indeed callable
     % on-chain and it registers an oracle on-chain
     ?TEST_LOG("Create contract ~p.aes on-chain", [ContractName]),
+    Height =  proplists:get_value(height, Cfg, 4),
     run(#{cfg => Cfg},
         [ % create account for being contract owner
           fun(#{} = Props) ->
@@ -3916,6 +4164,7 @@ fp_register_oracle(Cfg) ->
               Props#{state => S1, onchain_contract_owner_pubkey => NewAcc,
                                   onchain_contract_owner_privkey => PrivKey}
           end,
+          set_prop(height, Height),
           % create contract on-chain
           fun(#{onchain_contract_owner_pubkey := PubKey,
                 state := S0} = Props) ->
@@ -3927,8 +4176,8 @@ fp_register_oracle(Cfg) ->
                     #{owner_id    => aeser_id:create(account, PubKey),
                       nonce       => Nonce,
                       code        => BinCode,
-                      vm_version  => ?VM_VERSION,
-                      abi_version => ?ABI_VERSION,
+                      vm_version  => aect_test_utils:latest_sophia_vm_version(),
+                      abi_version => aect_test_utils:latest_sophia_abi_version(),
                       deposit     => 1,
                       amount      => 1,
                       gas         => 123456,
@@ -3937,7 +4186,7 @@ fp_register_oracle(Cfg) ->
                       fee         => 1000000 * aec_test_utils:min_gas_price()}),
             ?TEST_LOG("Contract create tx ~p", [ContractCreateTx]),
             OnChainTrees = aesc_test_utils:trees(S0),
-            TxEnv = tx_env(#{height => 3}),
+            TxEnv = tx_env(#{height => Height}),
             {ok, OnChainTrees1,_} = aetx:process(ContractCreateTx,
                                                  OnChainTrees,
                                                  TxEnv),
@@ -3964,7 +4213,7 @@ fp_register_oracle(Cfg) ->
                       nonce       => Nonce,
                       contract_id => aeser_id:create(contract,
                                                     ContractId),
-                      abi_version => ?ABI_VERSION,
+                      abi_version => aect_test_utils:latest_sophia_abi_version(),
                       amount      => 1,
                       gas         => 123456,
                       gas_price   => aec_test_utils:min_gas_price(),
@@ -3972,7 +4221,7 @@ fp_register_oracle(Cfg) ->
                       fee         => 600000 * aec_test_utils:min_gas_price()}),
             ?TEST_LOG("Contract call tx ~p", [CallTx]),
             OnChainTrees = aesc_test_utils:trees(S0),
-            TxEnv = tx_env(#{height => 4}),
+            TxEnv = tx_env(#{height => Height + 1}),
             {ok, OnChainTrees1,_} = aetx:process(CallTx,
                                                  OnChainTrees,
                                                  TxEnv),
@@ -3988,8 +4237,9 @@ fp_register_oracle(Cfg) ->
             Props#{state => S1}
           end]),
     ?TEST_LOG("Oracle registered on-chain, proceeding with off-chain tests", []),
+    MeckGetTrees = proplists:get_value(meck_chain_get_trees, Cfg),
     Test =
-        fun(Owner, Forcer) ->
+        fun(Owner, Forcer, PinnedBlock) ->
             ?TEST_LOG("Oracle register off-chain, owner is ~p, forcer is ~p",
                       [Owner, Forcer]),
             ContractCreateRound = 10,
@@ -4001,6 +4251,7 @@ fp_register_oracle(Cfg) ->
                   set_from(initiator),
                   set_prop(round, 42),
                   set_prop(state_hash, StateHash),
+                  set_prop(height, Height),
                   positive(fun snapshot_solo_/2),
                   fun(#{state := S,
                         channel_pubkey := ChannelPubKey} = Props) ->
@@ -4017,6 +4268,22 @@ fp_register_oracle(Cfg) ->
                                           _InitArgs = [],
                                           _Deposit  = 2),
                   % force progress contract on-chain
+                  fun(P) ->
+                      case PinnedBlock of
+                          no_pinned_block -> P;
+                          {BH, BType} ->
+                          run(P,
+                              [ set_prop(pinned_block,
+                                         aesc_pinned_block:block_hash(BH,
+                                                                     BType)),
+                                fun(#{state := S} = P1) ->
+                                    Trees = aesc_test_utils:trees(S),
+                                    MeckGetTrees(BH, Trees),
+                                    P1
+                                end
+                              ])
+                      end
+                  end,
                   fun(#{contract_id := ContractId,
                         from_pubkey := Pubkey,
                         from_privkey := Privkey} = Props) ->
@@ -4057,8 +4324,10 @@ fp_register_oracle(Cfg) ->
                       Props
                   end])
         end,
-    [Test(Owner, Forcer) || Owner  <- ?ROLES,
-                            Forcer <- ?ROLES],
+    PinnedBlocks = proplists:get_value(pinned_blocks, Cfg, [no_pinned_block]),
+    [Test(Owner, Forcer, PB) || Owner  <- ?ROLES,
+                                Forcer <- ?ROLES,
+                                PB     <- PinnedBlocks],
     ok.
 
 create_contract_poi_and_payload(Round, ContractRound, Owner) ->
@@ -4344,7 +4613,7 @@ create_contract_call_payload_with_calldata(Key, ContractId, CallData, Amount) ->
                 aesc_offchain_update:op_call_contract(
                     aeser_id:create(account, From),
                     aeser_id:create(contract, ContractId),
-                    ?ABI_VERSION, Amount, CallData,
+                    aect_test_utils:latest_sophia_abi_version(), Amount, CallData,
                     [],
                     _GasPrice = maps:get(gas_price, Props, aec_test_utils:min_gas_price()),
                     _GasLimit = maps:get(gas_limit, Props, 10000000))),
@@ -4416,8 +4685,8 @@ create_contract_in_trees(CreationRound, ContractName, InitArg, Deposit) ->
                 Compiler when is_function(Compiler)-> Compiler(ContractName)
             end,
         {ok, CallData} = encode_call_data(ContractName, <<"init">>, InitArg),
-        VmVersion = maps:get(vm_version, Props, ?VM_VERSION),
-        ABIVersion = maps:get(abi_version, Props, ?ABI_VERSION),
+        VmVersion = maps:get(vm_version, Props, aect_test_utils:latest_sophia_vm_version()),
+        ABIVersion = maps:get(abi_version, Props, aect_test_utils:latest_sophia_abi_version()),
         Update = aesc_offchain_update:op_new_contract(aeser_id:create(account, Owner),
                                                       VmVersion, ABIVersion,
                                                       BinCode,
@@ -5040,7 +5309,7 @@ register_new_oracle(QFormat, RFormat, QueryFee) ->
                                                    #{query_format => QFormat,
                                                      query_fee => QueryFee,
                                                      response_format => RFormat,
-                                                     abi_version => ?ABI_VERSION
+                                                     abi_version => aect_test_utils:latest_sophia_abi_version()
                                                     },
                                                    S),
                 PrivKey = aesc_test_utils:priv_key(Oracle, S),
@@ -5658,3 +5927,62 @@ fp_pinned_block_generic(Cfg, MeckChain, Blocks, ErrMsg) ->
                                  Block     <- Blocks],
     ok.
 
+fp_pinned_block_all(Cfg0) ->
+    PrevKBlockHash = <<41:?BLOCK_HEADER_HASH_BYTES/unit:8>>,
+    KBlockHash = <<42:?BLOCK_HEADER_HASH_BYTES/unit:8>>,
+    MBlockHash = <<43:?BLOCK_HEADER_HASH_BYTES/unit:8>>,
+    VM = aect_test_utils:latest_sophia_vm_version(),
+    ABI = aect_test_utils:latest_sophia_abi_version(),
+    true = aect_contracts:is_legal_version_at_height(create, #{abi => ABI, vm => VM},
+                                                    100000000),
+    MeckGetHeader =
+        fun(CurrentHeight) ->
+            meck:expect(aec_chain, get_header,
+                        fun(BHash) when BHash =:= KBlockHash ->
+                            {ok, fake_header(key, PrevKBlockHash,
+                                             PrevKBlockHash,
+                                             CurrentHeight - 5)};
+                           (BHash) when BHash =:= MBlockHash ->
+                            {ok, fake_header(micro, KBlockHash, KBlockHash,
+                                             CurrentHeight - 5)}
+                        end)
+        end,
+    MeckGetTrees =
+        fun(Hash, Trees) ->
+            meck:expect(aec_chain, get_block_state,
+                        fun(BHash) when BHash =:= Hash ->
+                            {ok, Trees}
+                        end)
+        end,
+    MeckGetHeader(123),
+    CustomConfig = [{height, 1000000}],
+    Cfg =  CustomConfig ++ Cfg0,
+    fp_register_name(Cfg).
+
+create_contract_in_onchain_trees(ContractName, InitArg, Deposit) ->	
+    fun(#{state := State0,	
+          owner := Owner} = Props) ->	
+        Trees0 = aesc_test_utils:trees(State0),	
+        {ok, BinCode} = compile_contract(ContractName),	
+        {ok, CallData} = encode_call_data(ContractName, <<"init">>, InitArg),	
+        Nonce = aesc_test_utils:next_nonce(Owner, State0),	
+        {ok, AetxCreateTx} =	
+            aect_create_tx:new(#{owner_id    => aeser_id:create(account, Owner),	
+                                 nonce       => Nonce,	
+                                 code        => BinCode,	
+                                 vm_version  => aect_test_utils:latest_sophia_vm_version(),	
+                                 abi_version => aect_test_utils:latest_sophia_abi_version(),	
+                                 deposit     => Deposit,	
+                                 amount      => 0,	
+                                 gas         => 123467,	
+                                 gas_price   => aec_test_utils:min_gas_price(),	
+                                 call_data   => CallData,	
+                                 fee         => 10 * aec_test_utils:min_gas_price()}),	
+        {contract_create_tx, CreateTx} = aetx:specialize_type(AetxCreateTx),	
+        Env = tx_env(Props),	
+        {ok, _} = aect_create_tx:check(CreateTx, Trees0, Env),	
+        {ok, Trees, _} = aect_create_tx:process(CreateTx, Trees0, Env),	
+        ContractId = aect_contracts:compute_contract_pubkey(Owner, Nonce),	
+        State = aesc_test_utils:set_trees(Trees, State0),	
+        Props#{state => State, contract_file => ContractName, contract_id => ContractId}	
+    end.
