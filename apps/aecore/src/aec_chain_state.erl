@@ -1172,9 +1172,9 @@ reward_split_for_protocol_foundation(BeneficiaryReward1, BeneficiaryReward2, New
     ActiveAtHeight = aec_governance:protocol_beneficiary_activation_height(),
     if NewestNodeHeight >= ActiveAtHeight ->
         ContribFactor = aec_governance:protocol_beneficiary_factor(),
-        Contrib1 = BeneficiaryReward1 * ContribFactor div 10,
+        Contrib1 = BeneficiaryReward1 * ContribFactor div 1000,
         AdjustedBeneficiaryReward1 = BeneficiaryReward1 - Contrib1,
-        Contrib2 = BeneficiaryReward2 * ContribFactor div 10,
+        Contrib2 = BeneficiaryReward2 * ContribFactor div 1000,
         AdjustedBeneficiaryReward2 = BeneficiaryReward2 - Contrib2,
         FoundationReward = Contrib1 + Contrib2,
         {AdjustedBeneficiaryReward1, AdjustedBeneficiaryReward2, FoundationReward};

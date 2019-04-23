@@ -487,7 +487,7 @@ protocol_beneficiary() ->
     <<250,151,56,184,99,123,38,230,217,93,156,146,231,90,209,233,15,203,25,102,32,140,178,207,59,171,81,2,249,197,198,61>>.
 
 protocol_beneficiary_factor() ->
-    1. %% 10%
+    100. %% 10%
 
 protocol_beneficiary_activation_height() ->
     1.
