@@ -186,11 +186,10 @@ serialization_template(?ACCOUNT_VSN_2) ->
     ].
 
 -spec serialize_for_client(account()) -> map().
-%% GA_TODO: More info on generalize accounts ;-)
 serialize_for_client(#account{id      = Id,
                               balance = Balance,
-                              nonce   = Nonce}) ->
+                              nonce   = Nonce} = Account) ->
     #{<<"id">>      => aeser_api_encoder:encode(id_hash, Id),
+      <<"kind">>    => type(Account),
       <<"balance">> => Balance,
       <<"nonce">>   => Nonce}.
-
