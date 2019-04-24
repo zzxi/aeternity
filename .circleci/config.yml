@@ -493,7 +493,7 @@ jobs:
             - dialyzer-cache-v2-
       - run:
           name: Update dialyzer PLT
-          command: DEBUG=1 make dialyzer-install
+          command: make dialyzer-install
       - save_cache:
           key: dialyzer-cache-v2-{{ .Branch }}-{{ .Revision }}
           paths:
@@ -521,7 +521,7 @@ jobs:
             - new-dialyzer-cache-v2-
       - run:
           name: Update dialyzer PLT
-          command: make dialyzer-install
+          command: make dialyzer-install DEBUG=1
       - save_cache:
           key: new-dialyzer-cache-v2-{{ .Branch }}-{{ .Revision }}
           paths:
