@@ -195,7 +195,7 @@ dev3-distclean: internal-distclean
 
 dialyzer-install: $(SWAGGER_ENDPOINTS_SPEC)
 	@$(REBAR) tree
-	@$(REBAR) dialyzer -u true -s false
+	@$(REBAR) dialyzer -u true -s false DEBUG=1
 
 dialyzer: $(SWAGGER_ENDPOINTS_SPEC)
 	@$(REBAR) dialyzer
