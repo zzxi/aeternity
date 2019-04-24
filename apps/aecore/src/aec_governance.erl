@@ -24,7 +24,7 @@
          primop_base_gas/1,
          protocol_beneficiary/0,
          protocol_beneficiary_factor/0,
-         protocol_beneficiary_activation_height/0,
+         protocol_beneficiary_activation/1,
          add_network_id/1,
          add_network_id_last/1,
          get_network_id/0,
@@ -489,5 +489,9 @@ protocol_beneficiary() ->
 protocol_beneficiary_factor() ->
     100. %% 10%
 
-protocol_beneficiary_activation_height() ->
-    1.
+protocol_beneficiary_activation(Height) ->
+    case aec_hard_forks:protocol_effective_at_height(Height) of
+        ?ROMA_PROTOCOL_VSN -> false;
+        ?MINERVA_PROTOCOL_VSN -> false;
+        Vsn when Vsn >= ?FORTUNA_PROTOCOL_VSN -> true
+    end.

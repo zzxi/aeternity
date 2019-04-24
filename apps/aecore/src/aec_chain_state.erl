@@ -1169,8 +1169,8 @@ reward_split_for_protocol_foundation(BeneficiaryReward1, BeneficiaryReward2, New
     %% Control activation with direct height instead protocol due to
     %% in troduction near next hardfork and potential
     %% activation during the next hardfork life
-    ActiveAtHeight = aec_governance:protocol_beneficiary_activation_height(),
-    if NewestNodeHeight >= ActiveAtHeight ->
+    ActivationFlag = aec_governance:protocol_beneficiary_activation(NewestNodeHeight),
+    if ActivationFlag =:= true ->
         ContribFactor = aec_governance:protocol_beneficiary_factor(),
         Contrib1 = BeneficiaryReward1 * ContribFactor div 1000,
         AdjustedBeneficiaryReward1 = BeneficiaryReward1 - Contrib1,
