@@ -81,8 +81,10 @@ siblings_on_key_block(Config) ->
     Account2 = #{ pubkey := PK2 } = new_keypair(),
 
     ct:pal("Setting up accounts"),
-    {ok, Tx0a} = add_spend_tx(N1, 1000000, 20000 * aec_test_utils:min_gas_price(), 1, 10, patron(), PK1),
-    {ok, Tx0b} = add_spend_tx(N1, 1000000, 20000 * aec_test_utils:min_gas_price(), 2, 10, patron(), PK2),
+    Fee0a = 20000 * aec_test_utils:min_gas_price(),
+    Fee0b = 20000 * aec_test_utils:min_gas_price(),
+    {ok, Tx0a} = add_spend_tx(N1, 1000000, Fee0a, 1, 10, patron(), PK1),
+    {ok, Tx0b} = add_spend_tx(N1, 1000000, Fee0b, 2, 10, patron(), PK2),
 
     {ok, _} = aecore_suite_utils:mine_blocks_until_txs_on_chain(N1, [Tx0a, Tx0b], ?MAX_MINED_BLOCKS),
 
@@ -90,6 +92,7 @@ siblings_on_key_block(Config) ->
 
     Top = lists:last(N1Blocks2),
     ?assertEqual(key, aec_blocks:type(Top)),
+
     siblings_common(Top, N1, N2, Account1, Account2).
 
 
@@ -114,9 +117,12 @@ siblings_on_micro_block(Config) ->
     Account3 = #{ pubkey := PK3 } = new_keypair(),
 
     ct:pal("Setting up accounts"),
-    {ok, Tx0a} = add_spend_tx(N1, 100000 * aec_test_utils:min_gas_price(), 20000 * aec_test_utils:min_gas_price(), 1, 10, patron(), PK1),
-    {ok, Tx0b} = add_spend_tx(N1, 100000 * aec_test_utils:min_gas_price(), 20000 * aec_test_utils:min_gas_price(), 2, 10, patron(), PK2),
-    {ok, Tx0c} = add_spend_tx(N1, 100000 * aec_test_utils:min_gas_price(), 20000 * aec_test_utils:min_gas_price(), 3, 10, patron(), PK3),
+    Fee0a = 20000 * aec_test_utils:min_gas_price(),
+    Fee0b = 20000 * aec_test_utils:min_gas_price(),
+    Fee0c = 20000 * aec_test_utils:min_gas_price(),
+    {ok, Tx0a} = add_spend_tx(N1, 100000 * aec_test_utils:min_gas_price(), Fee0a, 1, 10, patron(), PK1),
+    {ok, Tx0b} = add_spend_tx(N1, 100000 * aec_test_utils:min_gas_price(), Fee0b, 2, 10, patron(), PK2),
+    {ok, Tx0c} = add_spend_tx(N1, 100000 * aec_test_utils:min_gas_price(), Fee0c, 3, 10, patron(), PK3),
 
     Txs = [Tx0a, Tx0b, Tx0c],
     {ok, _} = aecore_suite_utils:mine_blocks_until_txs_on_chain(N1, Txs, ?MAX_MINED_BLOCKS),
@@ -221,13 +227,42 @@ siblings_common(TopBlock, N1, N2, Account1, Account2) ->
                          || X <- lists:seq(N1KeyBlocksCount + 1, N2Height - Delay),
                             X =/= FraudHeight]) + FraudReward,
 
-    case Bal1 >= Reward1 andalso Bal1 < Reward1 + 100000 * aec_test_utils:min_gas_price() of %% should get some fees
-        true -> ok;
-        false -> error({bad_balance1, Bal1})
-    end,
-    case Bal2 >= Reward2 andalso Bal2 < Reward2 + 100000 * aec_test_utils:min_gas_price() of
-        true -> ok;
-        false -> error({bad_balance2, Bal2})
+    case aec_governance:get_network_id() of
+        <<"local_fortuna_testnet">> ->
+            {value, FoundationAcc} = rpc:call(N2, aec_chain, get_account,
+                                              [aec_governance:protocol_beneficiary()]),
+
+            FoundationBal = aec_accounts:balance(FoundationAcc),
+
+            %% Foundation gets some fraction of the reward. The foundation reward then
+            %% must be deducted from the reward to get the actual reward that goes to
+            %% the beneficiary.
+            FoundationReward1 = Reward1 * aec_governance:protocol_beneficiary_factor() div 1000,
+            FoundationReward2 = Reward2 * aec_governance:protocol_beneficiary_factor() div 1000,
+
+            %% There are no tx fees included in the calculation so the FoundationBal
+            %% must be at least the sum of all foundation rewards (without the fees).
+            true = FoundationBal >= (FoundationReward1 + FoundationReward2),
+
+            case Bal1 >= (Reward1 - FoundationReward1) andalso
+                 Bal1 < (Reward1 - FoundationReward1) + 100000 * aec_test_utils:min_gas_price() of %% should get some fees
+                true -> ok;
+                false -> error({bad_balance1, Bal1})
+            end,
+            case Bal2 >= (Reward2 - FoundationReward2) andalso
+                Bal2 < (Reward2 - FoundationReward2) + 100000 * aec_test_utils:min_gas_price() of
+                true -> ok;
+                false -> error({bad_balance2, Bal2})
+            end;
+        _Other ->
+            case Bal1 >= Reward1 andalso Bal1 < Reward1 + 100000 * aec_test_utils:min_gas_price() of %% should get some fees
+                true -> ok;
+                false -> error({bad_balance1, Bal1})
+            end,
+            case Bal2 >= Reward2 andalso Bal2 < Reward2 + 100000 * aec_test_utils:min_gas_price() of
+                true -> ok;
+                false -> error({bad_balance2, Bal2})
+            end
     end,
 
     %% Check nodes are in sync
@@ -243,7 +278,6 @@ siblings_common(TopBlock, N1, N2, Account1, Account2) ->
     MR = aec_governance:block_mine_reward(FraudHeight),
     {true, _, _} = {Locked >= MR - FraudReward, Locked, {MR, FraudReward}},% some fees
     {true, _, _} = {Locked =< MR, Locked, MR}.
-
 
 %% ============================================================
 %% Helpers
