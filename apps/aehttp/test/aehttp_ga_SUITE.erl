@@ -68,13 +68,17 @@ init_per_suite(Config0) ->
                      <<"hard_forks">> => Forks}},
     Config1 = [{symlink_name, "latest.http_ga"}, {test_module, ?MODULE}] ++ Config0,
     Config2 = aecore_suite_utils:init_per_suite([?NODE], DefCfg, Config1),
-    [{nodes, [aecore_suite_utils:node_tuple(?NODE)]}]  ++ Config2.
+    [{nodes, [aecore_suite_utils:node_tuple(?NODE)]}] ++ Config2.
 
 end_per_suite(_Config) ->
     ok.
 
-init_per_group(ga_txs, Config) -> init_for_ga(Config);
-init_per_group(ga_info, Config) -> init_for_ga(Config).
+init_per_group(_, Config) ->
+    case aect_test_utils:latest_protocol_version() of
+        ?ROMA_PROTOCOL_VSN    -> {skip, generalized_accounts_not_in_roma};
+        ?MINERVA_PROTOCOL_VSN -> {skip, generalized_accounts_not_in_minerva};
+        ?FORTUNA_PROTOCOL_VSN -> init_for_ga(Config)
+    end.
 
 init_for_ga(Config) ->
     NodeName = aecore_suite_utils:node_name(?NODE),
@@ -125,13 +129,18 @@ end_per_testcase(_Case, Config) ->
 attach(Config) ->
     %% Get account information.
     #{acc_a := #{pub_key := APub, priv_key := APriv}} = proplists:get_value(accounts, Config),
-    ABal0 = get_balance(APub),
+    Addr = aeser_api_encoder:encode(account_pubkey, APub),
+    {ok, 200, AccountA0} = account_by_pubkey(Addr),
+    ABal0 = maps:get(<<"balance">>, AccountA0),
+    ?assertEqual(<<"basic">>, maps:get(<<"kind">>, AccountA0)),
 
     #{tx_hash := AttachTx} = post_attach_tx(APub, APriv),
 
     ?MINE_TXS([AttachTx]),
 
-    ABal1 = get_balance(APub),
+    {ok, 200, AccountA1} = account_by_pubkey(Addr),
+    ABal1 = maps:get(<<"balance">>, AccountA1),
+    ?assertEqual(<<"generalized">>, maps:get(<<"kind">>, AccountA1)),
 
     ct:pal("Cost: ~p", [ABal0 - ABal1]),
     MGP = aec_test_utils:min_gas_price(),
